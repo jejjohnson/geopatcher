@@ -1,8 +1,8 @@
-site_name: mypackage
-site_description: My short description for my project.
+site_name: geopatcher
+site_description: Four-axis Patcher framework for geospatial fields — split, operate, stitch.
 site_author: J. Emmanuel Johnson
-repo_url: https://github.com/jejjohnson/pypackage_template
-repo_name: jejjohnson/pypackage_template
+repo_url: https://github.com/jejjohnson/geopatcher
+repo_name: jejjohnson/geopatcher
 
 theme:
   name: material
@@ -42,11 +42,18 @@ plugins:
 
 nav:
   - Home: index.md
-  - Examples:
-      - Demo: notebooks/example_demo.ipynb
+  - Concepts:
+      - Patching: patching.md
+  - Tutorials:
+      - Patching intro: notebooks/patching_intro.ipynb
+      - Patching samplers: notebooks/patching_sampling.ipynb
+      - Patching geometries: notebooks/patching_geometries.ipynb
+      - Patching backends: notebooks/patching_backends.ipynb
+      - Patching time: notebooks/patching_time.ipynb
+      - Patching streaming: notebooks/patching_streaming.ipynb
+      - Catalog ↔ patching: notebooks/catalog_patching.ipynb
   - API Reference: api/reference.md
   - Contributing: contributing.md
-  - Changelog: CHANGELOG.md
 
 markdown_extensions:
   - admonition
