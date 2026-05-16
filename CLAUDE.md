@@ -4,8 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-<!-- TODO: Replace with your project description -->
-A Python package. Built with Python 3.12+, uv, pytest, and MkDocs.
+`geopatcher` is the four-axis Patcher framework for geospatial fields:
+split a field into local patches, run an operator per patch, stitch
+local outputs back into a global field. Three patcher families
+(`SpatialPatcher`, `TemporalPatcher`, `SpatioTemporalPatcher`) compose
+the four axes (Geometry, Sampler, Window, Aggregation) over a `Field`
+protocol that adapts the backend substrate (raster, xarray, geopandas,
+xvec, …). Built with Python 3.12+, uv, pytest, and MkDocs.
+
+`geopatcher` has no dependency on any operator-graph composition library
+— it's a standalone framework. Integration wrappers (`GridSampler`,
+`ApplyToChips`, `Stitch`) for [geotoolz](https://github.com/jejjohnson/geotoolz)
+or similar live in the consuming library.
 
 ## Common Commands
 
@@ -14,7 +24,7 @@ make install              # Install all deps (uv sync --all-groups) + pre-commit
 make test                 # Run tests: uv run pytest -v
 make format               # Auto-fix: ruff format . && ruff check --fix .
 make lint                 # Lint code: ruff check .
-make typecheck            # Type check: ty check src/mypackage
+make typecheck            # Type check: ty check src/geopatcher
 make precommit            # Run pre-commit on all files
 make docs-serve           # Local docs server
 ```
@@ -22,31 +32,45 @@ make docs-serve           # Local docs server
 ### Running a single test
 
 ```bash
-uv run pytest tests/test_example.py::TestClass::test_method -v
+uv run pytest tests/test_sampler.py -v
 ```
 
 ### Pre-commit checklist (all four must pass)
 
 ```bash
 uv run pytest -v                              # Tests
-uv run --group lint ruff check .              # Lint — ENTIRE repo, not just src/mypackage/
+uv run --group lint ruff check .              # Lint — ENTIRE repo, not just src/geopatcher/
 uv run --group lint ruff format --check .     # Format — ENTIRE repo
-uv run --group typecheck ty check src/mypackage  # Typecheck — package only
+uv run --group typecheck ty check src/geopatcher  # Typecheck — package only
 ```
 
-**Critical**: Always lint/format with `.` (repo root), not `src/mypackage/`. CI runs `ruff check .` which includes `tests/` and `scripts/`.
+**Critical**: Always lint/format with `.` (repo root), not `src/geopatcher/`. CI runs `ruff check .` which includes `tests/`.
 
 ## Architecture
 
 ### Package structure
 
-All implementation lives in `src/mypackage/`. The public API is re-exported through `src/mypackage/__init__.py`.
+All implementation lives in `src/geopatcher/_src/`. The public API is
+re-exported through `src/geopatcher/__init__.py`. The `_src` layer is
+private and may be rearranged without notice.
+
+Layout:
+
+| Path                                  | Purpose                                                |
+| ------------------------------------- | ------------------------------------------------------ |
+| `src/geopatcher/_src/patch.py`        | `Patch` / `TemporalPatch` / `SpatioTemporalPatch` carriers |
+| `src/geopatcher/_src/protocols.py`    | `Field` / `AsyncField` / `Domain` Protocols            |
+| `src/geopatcher/_src/domains.py`      | `GridDomain` / `VectorDomain` / `PointDomain` (`RasterDomain` re-exported from `georeader`) |
+| `src/geopatcher/_src/fields/`         | `RasterField` + extras-gated `XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField` |
+| `src/geopatcher/_src/spatial/`        | `SpatialPatcher` + the four spatial axes               |
+| `src/geopatcher/_src/time/`           | `TemporalPatcher` + the four temporal axes             |
+| `src/geopatcher/_src/spatial_time.py` | `SpatioTemporalPatcher` (product / coupled coupling)   |
 
 ### Key directories
 
 | Path | Purpose |
 |------|---------|
-| `src/mypackage/` | Main package source code |
+| `src/geopatcher/` | Main package source code |
 | `tests/` | Test suite |
 | `docs/` | Documentation (MkDocs) |
 | `notebooks/` | Jupyter notebooks |
@@ -54,16 +78,15 @@ All implementation lives in `src/mypackage/`. The public API is re-exported thro
 
 ## Documentation Examples
 
-Example notebooks live in `docs/notebooks/` as jupytext percent-format `.py` files. The workflow:
+Example notebooks live in `docs/notebooks/`. The tutorial notebooks
+import `from geotoolz import Sequential, Lambda` (the operator-graph
+bridge) to illustrate end-to-end pipelines — `geotoolz` is a soft
+prerequisite for re-executing those notebooks. The committed `.ipynb`
+files are pre-executed; `mkdocs-jupyter` renders them with
+`execute: false`.
 
-1. Write the `.py` source (jupytext percent format)
-2. Convert and execute: `jupytext --to notebook foo.py` then `jupyter nbconvert --execute --inplace foo.ipynb`
-3. Delete the `.py` — the executed `.ipynb` is the committed source of truth
-4. `mkdocs-jupyter` renders the pre-executed `.ipynb` with `execute: false`
-
-Figures render inline via `plt.show()` — do **not** use `savefig` or commit separate PNG files. The `.ipynb` cell outputs are the single source of rendered figures.
-
-See `.github/instructions/docs-examples.instructions.md` for full standards.
+Figures render inline via `plt.show()` — do **not** use `savefig` or
+commit separate PNG files.
 
 ## Coding Conventions
 
