@@ -118,14 +118,21 @@ class SpatialSphericalCap(SpatialGeometry):
     _EARTH_RADIUS_KM: ClassVar[float] = 6371.0
 
     def neighborhood(self, domain: Any, anchor: tuple[float, float]) -> np.ndarray:
-        lat_a, lon_a = float(anchor[0]), float(anchor[1])
         if isinstance(domain, GridDomain):
+            # GridDomain stores named axes; anchor is (lat, lon) by convention.
+            lat_a, lon_a = float(anchor[0]), float(anchor[1])
             lat = np.asarray(domain.coords["lat"])
             lon = np.asarray(domain.coords["lon"])
             llat, llon = np.meshgrid(lat, lon, indexing="ij")
             d = _haversine_km(lat_a, lon_a, llat, llon)
             return np.argwhere(d <= self.radius_km)
         if isinstance(domain, PointDomain):
+            # PointDomain coords are (x, y) = (lon, lat), matching the
+            # GeoPandas / xvec adapter convention. The KNN/radius haversine
+            # paths on PointDomain use anchor[0] = lon, anchor[1] = lat;
+            # mirror that here so spherical-cap on the natural (lon, lat)
+            # anchor doesn't quietly swap coordinates.
+            lon_a, lat_a = float(anchor[0]), float(anchor[1])
             lat_pts = domain.coords[:, 1]
             lon_pts = domain.coords[:, 0]
             d = _haversine_km(lat_a, lon_a, lat_pts, lon_pts)

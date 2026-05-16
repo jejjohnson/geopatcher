@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from geopatcher._src.patch import SpatioTemporalPatch
+from geopatcher._src.patch import SpatioTemporalPatch, TemporalPatch
 from geopatcher._src.spatial import SpatialPatcher
 from geopatcher._src.time.patcher import TemporalPatcher
 
@@ -116,16 +116,20 @@ class SpatioTemporalPatcher:
                     weights=base_weights,
                 )
 
-    def merge(self, patches: Iterable[Any], field: Any) -> dict[Any, Any]:
+    def merge(self, patches: Iterable[Any], field: Any) -> list[tuple[Any, Any]]:
         """Group patches by spatial anchor and apply the temporal aggregation.
 
-        Returns ``{spatial_anchor: temporal_aggregation_result}``. The
-        per-anchor temporal merge runs through `self.temporal.aggregation`,
-        but the spatial aggregation is intentionally **not** applied — the
-        returned dict is the by-anchor view callers typically want for
-        spatiotemporal workflows (e.g. event-triggered patching, where the
-        anchor *is* the unit of interest). Users who need a full spatial
-        merge across the temporal results can pass the dict's values through
+        Returns ``[(spatial_anchor, temporal_aggregation_result), …]`` — a
+        list of pairs rather than a ``dict`` because GridDomain anchors are
+        ``dict[str, …]`` (unhashable), KNN-graph anchors are numpy arrays
+        (also unhashable), and we want to preserve the original anchor
+        object on the result. The per-anchor temporal merge runs through
+        `self.temporal.aggregation`, but the spatial aggregation is
+        intentionally **not** applied — the returned list is the
+        by-anchor view callers typically want for spatiotemporal
+        workflows (e.g. event-triggered patching, where the anchor *is*
+        the unit of interest). Users who need a full spatial merge
+        across the temporal results can pass the values through
         ``self.spatial.aggregation.merge`` themselves.
 
         Args:
@@ -133,11 +137,38 @@ class SpatioTemporalPatcher:
             field: The original field — currently unused, kept for the
                 symmetry with `SpatialPatcher.merge(patches, domain)` so
                 callers can wire the two interchangeably.
+
+        Returns:
+            ``[(anchor, merged), …]`` in first-seen anchor order.
         """
-        by_space: dict[Any, list[Any]] = {}
+        # Group on a hashable surrogate (dict anchors → sorted-item tuples,
+        # arrays → bytes) but keep the original anchor object alongside
+        # the per-group patch list for downstream consumers.
+        by_space: dict[Any, tuple[Any, list[Any]]] = {}
         for p in patches:
-            by_space.setdefault(p.space, []).append(p)
-        return {k: self.temporal.aggregation.merge(v) for k, v in by_space.items()}
+            key = _hashable(p.space)
+            by_space.setdefault(key, (p.space, []))[1].append(p)
+        # Temporal aggregations read `anchor` + `indices`, but
+        # SpatioTemporalPatch stores them as `time` + `temporal_indices`;
+        # rebox each group as TemporalPatch so TemporalForecast /
+        # TemporalHierarchicalCombine / etc. don't crash on AttributeError.
+        return [
+            (
+                anchor,
+                self.temporal.aggregation.merge(
+                    [
+                        TemporalPatch(
+                            data=p.data,
+                            anchor=p.time,
+                            indices=p.temporal_indices,
+                            weights=p.weights,
+                        )
+                        for p in group
+                    ]
+                ),
+            )
+            for anchor, group in by_space.values()
+        ]
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -146,3 +177,28 @@ class SpatioTemporalPatcher:
             "coupling": self.coupling,
             "time_axis": self.time_axis,
         }
+
+
+def _hashable(anchor: Any) -> Any:
+    """Coerce an anchor into a hashable surrogate for use as a dict key.
+
+    GridDomain samplers emit ``dict[str, …]`` anchors; numpy arrays / lists
+    of pixel coords show up for KNN-graph anchors. None of these are
+    hashable. Tuplise dicts in sorted-key order so the surrogate is stable
+    across iteration order; arrays go via ``.tobytes()``; sequences go via
+    ``tuple()``. Anything already hashable passes through unchanged.
+    """
+    try:
+        hash(anchor)
+        return anchor
+    except TypeError:
+        pass
+    if isinstance(anchor, dict):
+        return tuple(sorted((k, _hashable(v)) for k, v in anchor.items()))
+    if isinstance(anchor, np.ndarray):
+        return (anchor.shape, anchor.dtype.str, anchor.tobytes())
+    if isinstance(anchor, (list, tuple)):
+        return tuple(_hashable(v) for v in anchor)
+    # Last resort — stringify; this loses identity but keeps merge() from
+    # crashing on exotic anchor types.
+    return repr(anchor)

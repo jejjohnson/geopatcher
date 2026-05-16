@@ -71,7 +71,7 @@ class SpatialPatcher:
             base_weights = None
         for anchor in self.sampler.anchors(domain, self.geometry):
             indices = self.geometry.neighborhood(domain, anchor)
-            data = field.select(indices)
+            data = field.select(_unwrap_for_select(indices))
             weights = _build_weights(indices, base_weights)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
@@ -122,13 +122,28 @@ class AsyncSpatialPatcher:
             base_weights = None
         for anchor in self.sampler.anchors(domain, self.geometry):
             indices = self.geometry.neighborhood(domain, anchor)
-            data = await field.select(indices)
+            data = await field.select(_unwrap_for_select(indices))
             weights = _build_weights(indices, base_weights)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
         _warn_if_unsafe_streaming(self.aggregation)
         return self.aggregation.merge(patches, domain)
+
+
+def _unwrap_for_select(indices: Any) -> Any:
+    """Unwrap a `_MaskedWindow` to the underlying rasterio `Window` for `Field.select`.
+
+    `SpatialPolygonIntersection.neighborhood` returns a `_MaskedWindow`
+    so `_build_weights` can recover the interior mask. But `Field.select`
+    expects a plain `Window` (or dict / index list) — the wrapper would
+    confuse downstream readers like `RasterField.read_from_window`. Strip
+    it here at the call boundary; keep the wrapper on `Patch.indices` so
+    aggregation still sees the mask via `_resolve_indices`.
+    """
+    if isinstance(indices, _MaskedWindow):
+        return indices.window
+    return indices
 
 
 def _build_weights(indices: Any, base_weights: np.ndarray | None) -> Any:

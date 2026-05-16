@@ -248,16 +248,25 @@ class SpatialExplicit(SpatialSampler):
 
     Args:
         anchors_: Sequence of anchors. Type must match what the
-            `SpatialGeometry` expects on the target domain.
+            `SpatialGeometry` expects on the target domain. Accepts any
+            iterable at construction time; materialised to a list in
+            ``__post_init__`` so ``anchors()`` and ``get_config()`` can
+            both walk it independently (the previous Iterable typing
+            meant ``get_config()`` consumed one-shot iterators and
+            silently left ``anchors()`` empty afterwards).
     """
 
     anchors_: Iterable[Any] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.anchors_, list):
+            self.anchors_ = list(self.anchors_)
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
         yield from self.anchors_
 
     def get_config(self) -> dict[str, Any]:
-        return {"n_anchors": len(list(self.anchors_))}
+        return {"n_anchors": len(self.anchors_)}
 
 
 def _ndrange(ranges: list[range]) -> Iterator[tuple[int, ...]]:
