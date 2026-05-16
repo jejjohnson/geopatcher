@@ -61,6 +61,7 @@ pip install 'geopatcher[patch-full]'     # everything above
 ## Quickstart
 
 ```python
+import dataclasses
 import geopatcher as gp
 
 patcher = gp.SpatialPatcher(
@@ -74,7 +75,7 @@ patcher = gp.SpatialPatcher(
 outputs = []
 for patch in patcher.split(field):
     out = my_operator(patch.data)
-    outputs.append(patch.with_data(out))
+    outputs.append(dataclasses.replace(patch, data=out))
 
 stitched = patcher.merge(outputs, field.domain)
 ```

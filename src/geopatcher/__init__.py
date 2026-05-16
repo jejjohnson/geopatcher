@@ -20,7 +20,7 @@ that library, not here — geopatcher itself has no Operator dependency.
 
 from __future__ import annotations
 
-from geopatcher._src import spatial, time
+from geopatcher import fields, spatial, time
 from geopatcher._src.domains import (
     GridDomain,
     PointDomain,
@@ -189,16 +189,16 @@ __all__ = [
     "TemporalWindow",
     "VectorDomain",
     "__version__",
+    "fields",
     "spatial",
     "time",
 ]
 
 
-# Lazy field adapters keyed off optional extras.
+# Lazy field adapters keyed off optional extras — defer to the public
+# `geopatcher.fields` submodule's own lazy loader.
 def __getattr__(name: str):
     """Lazy-load optional Field adapters from `geopatcher.fields`."""
     if name in {"XarrayField", "GeoPandasField", "XvecField", "RioXarrayField"}:
-        from geopatcher._src import fields as _f
-
-        return getattr(_f, name)
+        return getattr(fields, name)
     raise AttributeError(name)

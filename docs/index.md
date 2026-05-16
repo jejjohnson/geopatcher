@@ -43,6 +43,7 @@ pip install 'geopatcher[patch-full]'     # everything above
 ## Quickstart
 
 ```python
+import dataclasses
 import geopatcher as gp
 
 patcher = gp.SpatialPatcher(
@@ -52,8 +53,10 @@ patcher = gp.SpatialPatcher(
     aggregation = gp.SpatialOverlapAdd(),
 )
 
+outputs = []
 for patch in patcher.split(field):
     out = my_operator(patch.data)
+    outputs.append(dataclasses.replace(patch, data=out))
 stitched = patcher.merge(outputs, field.domain)
 ```
 
