@@ -26,6 +26,8 @@ construction; not exercised here.)
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 import rasterio
@@ -120,16 +122,35 @@ class TestSpatialRandomDeterminism:
         b = list(SpatialRandom(n_samples=20, seed=7).anchors(domain.domain, rect))
         assert a == b
 
-    def test_seed_none_is_documented_non_deterministic(
-        self, domain: RasterField, rect: SpatialRectangular
+    def test_seed_none_constructs_a_fresh_rng_each_call(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        domain: RasterField,
+        rect: SpatialRectangular,
     ) -> None:
-        # Document the documented contract: seed=None re-seeds from OS
-        # entropy each call. With n_samples=20 across 64x64 the
-        # probability of two draws matching is negligible.
+        # Behavioral proxy for "seed=None is non-deterministic": prove
+        # that each `anchors()` call reaches for `np.random.default_rng`
+        # with the same `None` argument, which is what makes successive
+        # calls draw fresh OS entropy. A probabilistic
+        # `first != second` check would be technically flaky on
+        # deterministic CI entropy sources; this is bulletproof.
+        seen_seeds: list[Any] = []
+        real = np.random.default_rng
+
+        def tracking_default_rng(seed=None, *args, **kwargs):
+            seen_seeds.append(seed)
+            return real(seed, *args, **kwargs)
+
+        monkeypatch.setattr(np.random, "default_rng", tracking_default_rng)
+
         s = SpatialRandom(n_samples=20, seed=None)
-        first = list(s.anchors(domain.domain, rect))
-        second = list(s.anchors(domain.domain, rect))
-        assert first != second
+        list(s.anchors(domain.domain, rect))
+        list(s.anchors(domain.domain, rect))
+
+        # The sampler must have re-entered default_rng(None) at least
+        # twice — once per anchors() call. Other call sites with
+        # non-None seeds are allowed (we don't constrain them).
+        assert seen_seeds.count(None) >= 2
 
 
 class TestSpatialPoissonDiskDeterminism:

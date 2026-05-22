@@ -28,7 +28,7 @@ from __future__ import annotations
 import numpy as np
 import rasterio
 from georeader.geotensor import GeoTensor
-from hypothesis import HealthCheck, assume, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 
 from geopatcher import (
     RasterField,
@@ -195,19 +195,19 @@ def test_constant_field_preserves_constant(
 
 @settings(max_examples=80, deadline=None)
 @given(
-    h=st.integers(min_value=4, max_value=64),
-    w=st.integers(min_value=4, max_value=64),
-    patch=st.integers(min_value=2, max_value=8),
+    h=st.integers(min_value=2, max_value=64),
+    w=st.integers(min_value=2, max_value=64),
+    patch=st.integers(min_value=2, max_value=12),
     stride=st.integers(min_value=2, max_value=8),
 )
 def test_regular_stride_anchor_count_matches_formula(
     h: int, w: int, patch: int, stride: int
 ) -> None:
     # The drop-mode formula: floor((D - P) / S) + 1 along each axis,
-    # clamped to >= 1 when P > D. The sampler must respect this for
-    # any domain / patch / stride combination, not just the
-    # divides-evenly cases other tests exercise.
-    assume(patch <= h and patch <= w)
+    # clamped to >= 1 when P > D. Patch / stride / domain bounds
+    # deliberately overlap (patch up to 12, domain down to 2) so the
+    # patch > domain branch is part of the property — the clamp comment
+    # would be a lie otherwise.
     arr = np.zeros((h, w), dtype=np.float32)
     field = RasterField(
         GeoTensor(
