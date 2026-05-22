@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,7 +42,7 @@ class FlakyRasterField:
         self.attempts: dict[tuple[int, int], int] = {}
 
     @property
-    def domain(self):
+    def domain(self) -> Any:
         return self.wrapped.domain
 
     def select(self, indices):

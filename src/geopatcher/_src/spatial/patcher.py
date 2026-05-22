@@ -390,7 +390,7 @@ async def _build_patch_async_with_policy(
 def _record_patch_error(
     errors: list[PatchErrorRecord],
     anchor: Any,
-    exc: BaseException,
+    exc: Exception,
     retry_count: int,
 ) -> None:
     errors.append(
