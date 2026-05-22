@@ -15,10 +15,18 @@ from __future__ import annotations
 import traceback
 from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any, Literal
 
 import numpy as np
 
+from geopatcher._src.hooks import (
+    PatcherHook,
+    _as_hooks,
+    _dispatch,
+    _len_or_unknown,
+    _nbytes,
+)
 from geopatcher._src.patch import Patch
 from geopatcher._src.protocols import AsyncField, Field
 from geopatcher._src.spatial.aggregation import (
@@ -107,27 +115,72 @@ class SpatialPatcher:
     def __post_init__(self) -> None:
         _validate_error_policy(self.on_error, self.max_retries)
 
-    def split(self, field: Field) -> Iterator[Patch]:
+    def split(
+        self, field: Field, hooks: Iterable[PatcherHook] | None = None
+    ) -> Iterator[Patch]:
         """Yield patches lazily — one per anchor placed by the sampler."""
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
-        for anchor in self.sampler.anchors(domain, self.geometry):
-            patch = _build_patch_with_policy(
-                field=field,
-                domain=domain,
-                anchor=anchor,
-                geometry=self.geometry,
-                base_weights=base_weights,
-                boundary=boundary,
-                on_error=self.on_error,
-                max_retries=self.max_retries,
-                retry_on=self.retry_on,
-                errors=self.errors,
-                capture_traceback=self.capture_traceback,
-            )
-            if patch is not None:
+        hook_list = _as_hooks(hooks)
+        if not hook_list:
+            for anchor in self.sampler.anchors(domain, self.geometry):
+                patch = _build_patch_with_policy(
+                    field=field,
+                    domain=domain,
+                    anchor=anchor,
+                    geometry=self.geometry,
+                    base_weights=base_weights,
+                    boundary=boundary,
+                    on_error=self.on_error,
+                    max_retries=self.max_retries,
+                    retry_on=self.retry_on,
+                    errors=self.errors,
+                    capture_traceback=self.capture_traceback,
+                )
+                if patch is not None:
+                    yield patch
+            return
+        anchors = list(self.sampler.anchors(domain, self.geometry))
+        _dispatch(hook_list, "on_split_start", len(anchors))
+        try:
+            for anchor in anchors:
+                _dispatch(hook_list, "on_patch_start", anchor)
+                start = perf_counter()
+                errors_before = len(self.errors)
+                try:
+                    patch = _build_patch_with_policy(
+                        field=field,
+                        domain=domain,
+                        anchor=anchor,
+                        geometry=self.geometry,
+                        base_weights=base_weights,
+                        boundary=boundary,
+                        on_error=self.on_error,
+                        max_retries=self.max_retries,
+                        retry_on=self.retry_on,
+                        errors=self.errors,
+                        capture_traceback=self.capture_traceback,
+                    )
+                except Exception as exc:
+                    _dispatch(hook_list, "on_error", anchor, exc)
+                    raise
+                for record in self.errors[errors_before:]:
+                    _dispatch(
+                        hook_list, "on_error", anchor, _exception_from_record(record)
+                    )
+                if patch is None:
+                    continue
+                _dispatch(
+                    hook_list,
+                    "on_patch_done",
+                    anchor,
+                    perf_counter() - start,
+                    _nbytes(patch.data),
+                )
                 yield patch
+        finally:
+            _dispatch(hook_list, "on_split_end")
 
     def patch_at(self, field: Field, anchor: Any) -> Patch:
         """Read a single `Patch` at a specific anchor.
@@ -186,10 +239,23 @@ class SpatialPatcher:
         """
         return sum(1 for _ in self.sampler.anchors(field.domain, self.geometry))
 
-    def merge(self, patches: Iterable[Any], domain: Any) -> Any:
+    def merge(
+        self,
+        patches: Iterable[Any],
+        domain: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Any:
         """Hand off to the aggregation; warn on streaming-unsafe types."""
+        hook_list = _as_hooks(hooks)
+        _dispatch(hook_list, "on_merge_start", _len_or_unknown(patches))
         _warn_if_unsafe_streaming(self.aggregation)
-        return self.aggregation.merge(patches, domain)
+        try:
+            output = self.aggregation.merge(patches, domain)
+        except Exception as exc:
+            _dispatch(hook_list, "on_error", None, exc)
+            raise
+        _dispatch(hook_list, "on_merge_end", _nbytes(output))
+        return output
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -244,26 +310,71 @@ class AsyncSpatialPatcher:
     def __post_init__(self) -> None:
         _validate_error_policy(self.on_error, self.max_retries)
 
-    async def split(self, field: AsyncField) -> AsyncIterator[Patch]:
+    async def split(
+        self, field: AsyncField, hooks: Iterable[PatcherHook] | None = None
+    ) -> AsyncIterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
-        for anchor in self.sampler.anchors(domain, self.geometry):
-            patch = await _build_patch_async_with_policy(
-                field=field,
-                domain=domain,
-                anchor=anchor,
-                geometry=self.geometry,
-                base_weights=base_weights,
-                boundary=boundary,
-                on_error=self.on_error,
-                max_retries=self.max_retries,
-                retry_on=self.retry_on,
-                errors=self.errors,
-                capture_traceback=self.capture_traceback,
-            )
-            if patch is not None:
+        hook_list = _as_hooks(hooks)
+        if not hook_list:
+            for anchor in self.sampler.anchors(domain, self.geometry):
+                patch = await _build_patch_async_with_policy(
+                    field=field,
+                    domain=domain,
+                    anchor=anchor,
+                    geometry=self.geometry,
+                    base_weights=base_weights,
+                    boundary=boundary,
+                    on_error=self.on_error,
+                    max_retries=self.max_retries,
+                    retry_on=self.retry_on,
+                    errors=self.errors,
+                    capture_traceback=self.capture_traceback,
+                )
+                if patch is not None:
+                    yield patch
+            return
+        anchors = list(self.sampler.anchors(domain, self.geometry))
+        _dispatch(hook_list, "on_split_start", len(anchors))
+        try:
+            for anchor in anchors:
+                _dispatch(hook_list, "on_patch_start", anchor)
+                start = perf_counter()
+                errors_before = len(self.errors)
+                try:
+                    patch = await _build_patch_async_with_policy(
+                        field=field,
+                        domain=domain,
+                        anchor=anchor,
+                        geometry=self.geometry,
+                        base_weights=base_weights,
+                        boundary=boundary,
+                        on_error=self.on_error,
+                        max_retries=self.max_retries,
+                        retry_on=self.retry_on,
+                        errors=self.errors,
+                        capture_traceback=self.capture_traceback,
+                    )
+                except Exception as exc:
+                    _dispatch(hook_list, "on_error", anchor, exc)
+                    raise
+                for record in self.errors[errors_before:]:
+                    _dispatch(
+                        hook_list, "on_error", anchor, _exception_from_record(record)
+                    )
+                if patch is None:
+                    continue
+                _dispatch(
+                    hook_list,
+                    "on_patch_done",
+                    anchor,
+                    perf_counter() - start,
+                    _nbytes(patch.data),
+                )
                 yield patch
+        finally:
+            _dispatch(hook_list, "on_split_end")
 
     async def patch_at(self, field: AsyncField, anchor: Any) -> Patch:
         """Read a single `Patch` at a specific anchor.
@@ -295,9 +406,22 @@ class AsyncSpatialPatcher:
         """
         return sum(1 for _ in self.sampler.anchors(field.domain, self.geometry))
 
-    def merge(self, patches: Iterable[Any], domain: Any) -> Any:
+    def merge(
+        self,
+        patches: Iterable[Any],
+        domain: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Any:
+        hook_list = _as_hooks(hooks)
+        _dispatch(hook_list, "on_merge_start", _len_or_unknown(patches))
         _warn_if_unsafe_streaming(self.aggregation)
-        return self.aggregation.merge(patches, domain)
+        try:
+            output = self.aggregation.merge(patches, domain)
+        except Exception as exc:
+            _dispatch(hook_list, "on_error", None, exc)
+            raise
+        _dispatch(hook_list, "on_merge_end", _nbytes(output))
+        return output
 
 
 def _safe_base_weights(
@@ -402,6 +526,17 @@ async def _build_patch_async_with_policy(
                     continue
                 return None
             return None
+
+
+def _exception_from_record(record: PatchErrorRecord) -> Exception:
+    """Synthesize an Exception for hook dispatch from a recorded patch failure.
+
+    Used when the patcher swallows an exception under a non-``raise`` policy
+    but still wants to notify observability hooks. The reconstructed instance
+    carries only the message — frames have already been formatted into
+    ``record.traceback``.
+    """
+    return RuntimeError(f"{record.kind}: {record.message}")
 
 
 def _record_patch_error(

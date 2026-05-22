@@ -44,6 +44,7 @@ nav:
   - Home: index.md
   - Concepts:
       - Patching: patching.md
+      - Observability hooks: observability.md
       - Design decisions: decisions.md
   - Tutorials:
       - Patching intro: notebooks/patching_intro.ipynb
