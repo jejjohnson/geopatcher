@@ -24,6 +24,10 @@ The patcher core itself remains framework-free.
 from __future__ import annotations
 
 from geopatcher import fields, spatial, time
+from geopatcher._src.config import (
+    get_strict,
+    set_strict,
+)
 from geopatcher._src.domains import (
     GridDomain,
     PointDomain,
@@ -193,6 +197,8 @@ __all__ = [
     "VectorDomain",
     "__version__",
     "fields",
+    "get_strict",
+    "set_strict",
     "spatial",
     "time",
 ]

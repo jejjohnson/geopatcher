@@ -652,12 +652,16 @@ class SpatialReservoir(_ApproxStub):
 
 
 def _warn_if_unsafe_streaming(aggregation: SpatialAggregation) -> None:
-    if not aggregation.streaming_safe:
-        warnings.warn(
-            f"{type(aggregation).__name__} has streaming_safe = False — "
-            "the merge is happening in-RAM. For streaming alternatives see "
-            "scaling.md (Median->ApproxQuantile, Mode->HardVote or "
-            "ApproxMode, Learned->two-pass).",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if aggregation.streaming_safe:
+        return
+    from geopatcher._src.config import get_strict
+
+    msg = (
+        f"{type(aggregation).__name__} has streaming_safe = False — "
+        "the merge is happening in-RAM. For streaming alternatives see "
+        "scaling.md (Median->ApproxQuantile, Mode->HardVote or "
+        "ApproxMode, Learned->two-pass)."
+    )
+    if get_strict():
+        raise RuntimeError(msg)
+    warnings.warn(msg, RuntimeWarning, stacklevel=2)

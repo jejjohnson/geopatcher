@@ -71,6 +71,16 @@ class TemporalPatcher:
                     data=data, anchor=int(anchor), indices=s, weights=weights
                 )
 
+    def n_anchors(self, series: Any, time_axis: int = 0) -> int:
+        """Number of patches `split(series)` will yield.
+
+        Enumerates the sampler's anchors without slicing the series.
+        See ``docs/decisions.md`` (ADR-001) for context.
+        """
+        arr = np.asarray(series)
+        time_len = int(arr.shape[time_axis])
+        return sum(1 for _ in self.sampler.anchors(time_len))
+
     def merge(self, patches: Iterable[Any]) -> Any:
         return self.aggregation.merge(patches)
 

@@ -75,6 +75,19 @@ class SpatialPatcher:
             weights = _build_weights(indices, base_weights)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
+    def n_anchors(self, field: Field) -> int:
+        """Number of patches `split(field)` will yield.
+
+        Enumerates the sampler's anchors without touching the field —
+        only the domain is consulted. For samplers that can compute this
+        in O(1) (e.g. `SpatialRegularStride`), override
+        `SpatialSampler.n_anchors` to short-circuit.
+
+        See ``docs/decisions.md`` (ADR-001) for why `split` returns an
+        iterator and this helper exists as the ``len`` substitute.
+        """
+        return sum(1 for _ in self.sampler.anchors(field.domain, self.geometry))
+
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
         """Hand off to the aggregation; warn on streaming-unsafe types."""
         _warn_if_unsafe_streaming(self.aggregation)
@@ -125,6 +138,13 @@ class AsyncSpatialPatcher:
             data = await field.select(_unwrap_for_select(indices))
             weights = _build_weights(indices, base_weights)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+
+    def n_anchors(self, field: AsyncField) -> int:
+        """Number of patches `split(field)` will yield.
+
+        See `SpatialPatcher.n_anchors`.
+        """
+        return sum(1 for _ in self.sampler.anchors(field.domain, self.geometry))
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
         _warn_if_unsafe_streaming(self.aggregation)

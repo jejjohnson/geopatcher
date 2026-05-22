@@ -44,6 +44,7 @@ nav:
   - Home: index.md
   - Concepts:
       - Patching: patching.md
+      - Design decisions: decisions.md
   - Tutorials:
       - Patching intro: notebooks/patching_intro.ipynb
       - Patching samplers: notebooks/patching_sampling.ipynb

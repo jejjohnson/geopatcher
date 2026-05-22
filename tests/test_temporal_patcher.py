@@ -69,6 +69,18 @@ class TestTemporalPatcherSplit:
         # Each patch has up to 5 elements
         assert all(p.data.shape[0] <= 5 for p in patches)
 
+    def test_n_anchors_matches_split_length(self, series: np.ndarray) -> None:
+        # ADR-001: `n_anchors` is the cheap len() substitute.
+        tp = TemporalPatcher(
+            geometry=TemporalFixedLookback(length=5),
+            sampler=TemporalRegularStride(step=10),
+            window=TemporalCausalBoxcar(),
+            aggregation=TemporalMean(),
+        )
+        n = tp.n_anchors(series)
+        assert n == 10
+        assert n == sum(1 for _ in tp.split(series))
+
 
 class TestTemporalFold:
     def test_state_passing(self, series: np.ndarray) -> None:
