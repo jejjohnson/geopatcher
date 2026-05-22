@@ -91,8 +91,18 @@ class SpatialRectangular(SpatialGeometry):
             the reader's nodata). ``"shrink"`` clips the returned Window
             so the patch becomes smaller at the edge. ``"raise"`` emits
             edge anchors and raises at split time. See `BoundaryMode`.
+
             Only honored on raster domains in v0.x; GridDomain treats
             every mode as ``"drop"`` until an xarray-pad story lands.
+
+            **Caveat for ``"pad"``:** the boundless-read contract is
+            satisfied by `RasterField` / `AsyncRasterField` (which
+            delegate to ``GeoData.read_from_window(window, boundless=True)``)
+            but not by `RioXarrayField`, whose ``select`` clips via
+            ``isel``. On a `RioXarrayField`, ``boundary="pad"`` will
+            silently behave like ``"shrink"`` — wrap the data in
+            `RasterField` if you need true padding, or use ``"shrink"``
+            explicitly.
     """
 
     size: tuple[int, ...]

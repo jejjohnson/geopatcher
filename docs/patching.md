@@ -47,7 +47,7 @@ geom = SpatialRectangular(size=(256, 256), boundary="pad")
 | Mode | Behavior |
 |------|----------|
 | `"drop"` (default) | Sampler clips so overflowing anchors are never emitted. Edge residual is silently dropped — exactly the pre-issue-19 behavior. |
-| `"pad"` | Edge anchors are emitted; the raster `Field` reads with `boundless=True` so the patch is the full geometry size, padded in the overflow region with the reader's nodata. |
+| `"pad"` | Edge anchors are emitted; the raster `Field` reads with `boundless=True` so the patch is the full geometry size, padded in the overflow region with the reader's nodata. **Only `RasterField` / `AsyncRasterField` honor this contract today** — `RioXarrayField.select` clips via `isel` instead, so `"pad"` against a rioxarray field silently behaves like `"shrink"`. Wrap your data in `RasterField` if you need true padding, or use `"shrink"` explicitly. |
 | `"shrink"` | Edge anchors are emitted; the geometry clips the returned Window so the patch is *smaller* at the edge. Weights crop to match. |
 | `"raise"` | Edge anchors are emitted; `SpatialPatcher.split` raises a `ValueError` on the first overflow. Useful with `SpatialExplicit` when the caller wants strict edge handling. |
 

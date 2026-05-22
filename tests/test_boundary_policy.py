@@ -16,6 +16,8 @@ edges):
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 import pytest
 import rasterio
@@ -35,9 +37,15 @@ from geopatcher import (
 )
 
 
-def _patcher(boundary: str) -> SpatialPatcher:
+# Match the BoundaryMode literal defined in
+# `geopatcher._src.spatial.geometry`. Re-declared locally so the test
+# module doesn't reach into private code just for typing.
+BoundaryMode = Literal["drop", "pad", "shrink", "raise"]
+
+
+def _patcher(boundary: BoundaryMode) -> SpatialPatcher:
     return SpatialPatcher(
-        geometry=SpatialRectangular(size=(16, 16), boundary=boundary),  # type: ignore[arg-type]
+        geometry=SpatialRectangular(size=(16, 16), boundary=boundary),
         sampler=SpatialRegularStride(step=16),
         window=SpatialBoxcar(),
         aggregation=SpatialOverlapAdd(),
