@@ -37,7 +37,7 @@ def batch_split(
 ) -> Iterator[BatchedPatch]:
     """Yield `BatchedPatch` objects with data stacked on a leading axis."""
     if batch_size <= 0:
-        raise ValueError("batch_size must be > 0")
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
 
     batch = []
     for patch in patcher.split(field):
