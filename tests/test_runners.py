@@ -18,7 +18,7 @@ from geopatcher import (
 from geopatcher.runners import parallel_map
 
 
-def _double(data):
+def _double(data) -> np.ndarray:
     return np.asarray(data) * 2
 
 

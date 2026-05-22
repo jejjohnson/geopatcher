@@ -262,7 +262,7 @@ class SpatialMeanStd(SpatialAggregation):
         mean = 0.0
         m2 = 0.0
         for p in patches:
-            x = np.asarray(p.data, dtype=np.float64).ravel()
+            x = np.asarray(p.data, dtype=np.float64).reshape(-1)
             if x.size == 0:
                 continue
             batch_count = int(x.size)
