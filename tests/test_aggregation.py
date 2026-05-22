@@ -151,19 +151,23 @@ class TestSpatialMedian:
     def test_strict_raises_on_streaming_unsafe(self, empty_field: GeoTensor) -> None:
         # ADR-003: gp.set_strict(True) promotes the streaming_safe
         # warning to a hard RuntimeError so batch / CI callers fail fast.
+        # Capture and restore the initial value so we don't leak state
+        # if the caller has GEOPATCHER_STRICT=1 set or another test left
+        # strict mode flipped on.
         import geopatcher as gp
         from geopatcher._src.spatial.aggregation import (
             _warn_if_unsafe_streaming,
         )
 
-        assert gp.get_strict() is False
+        original = gp.get_strict()
         gp.set_strict(True)
         try:
+            assert gp.get_strict() is True
             with pytest.raises(RuntimeError, match="streaming_safe = False"):
                 _warn_if_unsafe_streaming(SpatialMedian())
         finally:
-            gp.set_strict(False)
-        assert gp.get_strict() is False
+            gp.set_strict(original)
+        assert gp.get_strict() is original
 
     def test_median_value(self, empty_field: GeoTensor) -> None:
         p1 = _patch(np.full((2, 2), 1.0), 0, 0)

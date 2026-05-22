@@ -79,11 +79,17 @@ class SpatialPatcher:
         """Number of patches `split(field)` will yield.
 
         Enumerates the sampler's anchors without touching the field —
-        only the domain is consulted. For samplers that can compute this
-        in O(1) (e.g. `SpatialRegularStride`), override
-        `SpatialSampler.n_anchors` to short-circuit.
+        only the domain is consulted.
 
-        See ``docs/decisions.md`` (ADR-001) for why `split` returns an
+        Determinism contract: holds exactly for samplers that return the
+        same anchor set on every call given the same ``(domain,
+        geometry)``. That covers all five samplers when a seed is set;
+        for unseeded `SpatialRandom` / `SpatialJitteredStride` /
+        `SpatialPoissonDisk` the count is still well-defined
+        (``n_samples`` for the first two; a probabilistic estimate for
+        the third), but the anchors materialised here are different
+        draws from the ones a subsequent `split` will see. See
+        ``docs/decisions.md`` (ADR-001) for why `split` returns an
         iterator and this helper exists as the ``len`` substitute.
         """
         return sum(1 for _ in self.sampler.anchors(field.domain, self.geometry))

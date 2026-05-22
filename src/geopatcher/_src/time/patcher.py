@@ -74,12 +74,20 @@ class TemporalPatcher:
     def n_anchors(self, series: Any, time_axis: int = 0) -> int:
         """Number of patches `split(series)` will yield.
 
-        Enumerates the sampler's anchors without slicing the series.
-        See ``docs/decisions.md`` (ADR-001) for context.
+        Walks the sampler **and** the geometry's per-anchor window — a
+        single geometry call may return a ``list[slice]`` (e.g.
+        `TemporalMultiScale`), in which case `split` yields one patch
+        per slice. We read ``series.shape`` rather than calling
+        ``np.asarray(series)`` so generic / lazy series don't get
+        materialised here. See ``docs/decisions.md`` (ADR-001).
         """
-        arr = np.asarray(series)
-        time_len = int(arr.shape[time_axis])
-        return sum(1 for _ in self.sampler.anchors(time_len))
+        shape = getattr(series, "shape", None) or np.shape(series)
+        time_len = int(shape[time_axis])
+        total = 0
+        for anchor in self.sampler.anchors(time_len):
+            window = self.geometry.window(time_len, int(anchor))
+            total += len(window) if isinstance(window, list) else 1
+        return total
 
     def merge(self, patches: Iterable[Any]) -> Any:
         return self.aggregation.merge(patches)
