@@ -122,22 +122,24 @@ class ErrorRecordingHook:
         self.errors.append((anchor, exc))
 
 
+class FailingField:
+    def __init__(self, domain: object) -> None:
+        self.domain = domain
+
+    def select(self, indexer: object) -> object:
+        raise ValueError("boom")
+
+    def with_data(self, array: object) -> object:
+        return array
+
+
 def test_patch_errors_dispatch_on_error(
     field: RasterField, patcher: SpatialPatcher
 ) -> None:
-    class FailingField:
-        domain = field.domain
-
-        def select(self, indexer: object) -> object:
-            raise ValueError("boom")
-
-        def with_data(self, array: object) -> object:
-            return array
-
     hook = ErrorRecordingHook()
 
     with pytest.raises(ValueError, match="boom"):
-        list(patcher.split(FailingField(), hooks=[hook]))
+        list(patcher.split(FailingField(field.domain), hooks=[hook]))
 
     assert len(hook.errors) == 1
     assert hook.errors[0][0] is not None

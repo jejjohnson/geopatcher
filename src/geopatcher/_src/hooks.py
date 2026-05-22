@@ -35,7 +35,11 @@ class PatcherHook(Protocol):
 
 
 def _as_hooks(hooks: Iterable[PatcherHook] | None) -> tuple[PatcherHook, ...]:
-    """Materialize hooks once so one-shot iterables work across callbacks."""
+    """Convert optional hooks to a materialized tuple.
+
+    This ensures one-shot iterables, such as generators, can be reused across
+    multiple callback dispatch calls throughout a split or merge operation.
+    """
     return () if hooks is None else tuple(hooks)
 
 
@@ -66,6 +70,7 @@ def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
 
 
 def _len_or_unknown(values: Iterable[Any]) -> int:
+    """Return ``len(values)`` or `UNKNOWN_TOTAL` for unsized iterables."""
     try:
         return len(values)  # type: ignore[arg-type]
     except TypeError:
