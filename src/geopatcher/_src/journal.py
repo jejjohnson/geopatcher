@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,11 @@ class PatchJournal:
                 try:
                     row = json.loads(line)
                 except json.JSONDecodeError:
+                    warnings.warn(
+                        f"skipping malformed journal row in {self.path}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
                     continue
                 self._rows[_anchor_key(row["anchor"])] = row
 

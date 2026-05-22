@@ -13,6 +13,7 @@ See ``design.md`` §1 for the four-axis framework.
 from __future__ import annotations
 
 import traceback
+from asyncio import BoundedSemaphore as AsyncBoundedSemaphore
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from threading import BoundedSemaphore, Condition
@@ -469,7 +470,9 @@ class AsyncSpatialPatcher:
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
-        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        slots = (
+            AsyncBoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        )
         byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
@@ -489,7 +492,9 @@ class AsyncSpatialPatcher:
                     capture_traceback=self.capture_traceback,
                 )
                 if patch is not None:
-                    release = _acquire_backpressure(patch, slots, byte_budget)
+                    release = await _acquire_backpressure_async(
+                        patch, slots, byte_budget
+                    )
                     if release is not None:
                         patch._release = release
                     yield patch
@@ -526,7 +531,7 @@ class AsyncSpatialPatcher:
                     )
                 if patch is None:
                     continue
-                release = _acquire_backpressure(patch, slots, byte_budget)
+                release = await _acquire_backpressure_async(patch, slots, byte_budget)
                 if release is not None:
                     patch._release = release
                 _dispatch(
@@ -789,6 +794,25 @@ def _acquire_backpressure(
     nbytes = byte_budget.acquire(patch)
     if slots is not None:
         slots.acquire()
+    if slots is None and nbytes == 0:
+        return None
+
+    def release() -> None:
+        if slots is not None:
+            slots.release()
+        byte_budget.release(nbytes)
+
+    return release
+
+
+async def _acquire_backpressure_async(
+    patch: Patch,
+    slots: AsyncBoundedSemaphore | None,
+    byte_budget: _ByteBudget,
+) -> Any | None:
+    nbytes = byte_budget.acquire(patch)
+    if slots is not None:
+        await slots.acquire()
     if slots is None and nbytes == 0:
         return None
 

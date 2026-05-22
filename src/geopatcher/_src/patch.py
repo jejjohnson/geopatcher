@@ -42,7 +42,7 @@ class Patch[AnchorT, IndicesT, DataT]:
     _release: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def with_data[NewDataT](self, data: NewDataT) -> Patch[AnchorT, IndicesT, NewDataT]:
-        """Return a copy of this patch carrying replacement data."""
+        """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
 
     def close(self) -> None:
@@ -77,7 +77,7 @@ class TemporalPatch[AnchorT, IndicesT, DataT]:
     def with_data[NewDataT](
         self, data: NewDataT
     ) -> TemporalPatch[AnchorT, IndicesT, NewDataT]:
-        """Return a copy of this patch carrying replacement data."""
+        """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
 
     def close(self) -> None:
@@ -115,7 +115,7 @@ class SpatioTemporalPatch:
     _release: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def with_data(self, data: Any) -> SpatioTemporalPatch:
-        """Return a copy of this patch carrying replacement data."""
+        """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
 
     def close(self) -> None:

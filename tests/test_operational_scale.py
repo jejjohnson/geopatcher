@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import rasterio
@@ -52,7 +54,7 @@ def test_patch_with_data_preserves_metadata() -> None:
 
 
 def test_patch_journal_persists_and_split_skips_completed(
-    tmp_path, field: RasterField
+    tmp_path: Path, field: RasterField
 ) -> None:
     patcher = SpatialPatcher(
         geometry=SpatialRectangular(size=(2, 2)),

@@ -27,6 +27,11 @@ from typing import Any, ClassVar
 import numpy as np
 
 
+COG_WRITER = "cog"
+DEFAULT_COG_BLOCKSIZE = 512
+HASH_BITS = 64
+
+
 # ---------------------------------------------------------------------------
 # Base + helpers
 # ---------------------------------------------------------------------------
@@ -280,7 +285,7 @@ class SpatialOverlapAdd(SpatialAggregation):
     streaming_safe: ClassVar[bool] = True
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
-        if self.streaming and self.target_path and self.writer == "cog":
+        if self.streaming and self.target_path and self.writer == COG_WRITER:
             result = self._merge_in_memory(patches, domain)
             return _write_cog(result, domain, self.target_path, self.cog)
         if self.streaming and self.target_path:
@@ -436,7 +441,7 @@ def _write_cog(
         raise ValueError("COG writer expects a 2-D array or a 3-D band-first array")
 
     options = dict(cog or {})
-    blocksize = options.pop("blocksize", 512)
+    blocksize = options.pop("blocksize", DEFAULT_COG_BLOCKSIZE)
     profile: dict[str, Any] = {
         "driver": "GTiff",
         "height": write_data.shape[-2],
@@ -779,11 +784,16 @@ class SpatialApproxCardinality(_SketchAggregation):
             h = _hash64(value)
             idx = h & ((1 << self.p) - 1)
             w = h >> self.p
-            rank = (64 - self.p) - w.bit_length() + 1 if w else 64 - self.p + 1
+            rank = (
+                (HASH_BITS - self.p) - w.bit_length() + 1
+                if w
+                else HASH_BITS - self.p + 1
+            )
             self._registers[idx] = max(int(self._registers[idx]), rank)
 
     def finalize(self) -> float:
         m = float(1 << self.p)
+        # HyperLogLog bias-correction constants from Flajolet et al. for m >= 128.
         alpha = 0.7213 / (1.0 + 1.079 / m)
         estimate = alpha * m * m / np.sum(2.0 ** (-self._registers.astype(float)))
         zeros = int(np.count_nonzero(self._registers == 0))
