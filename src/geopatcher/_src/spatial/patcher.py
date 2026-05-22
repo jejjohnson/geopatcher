@@ -72,6 +72,8 @@ class SpatialPatcher:
             `max_retries` before logging and skipping.
         max_retries: Number of retries when `on_error` is ``"retry"``.
         retry_on: Exception classes or class names that should be retried.
+            Defaults to I/O-shaped failures (`OSError`, `TimeoutError`) so
+            programmer errors are not retried unless explicitly requested.
 
     Examples:
         Sliding-window inference over a raster::

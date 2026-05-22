@@ -64,7 +64,12 @@ def _domain_array_shape(domain: Any) -> tuple[int, ...]:
 
 
 def _replace_nan_with_zero(array: np.ndarray) -> np.ndarray:
+    """Replace only NaN with zero; preserve infinities as real values."""
     return np.nan_to_num(array, nan=0.0, posinf=np.inf, neginf=-np.inf)
+
+
+def _mask_nan(array: np.ndarray) -> np.ndarray:
+    return np.where(~np.isnan(array), array, 0.0)
 
 
 def _resolve_indices(indices: Any) -> tuple[Any, ...] | None:
@@ -205,7 +210,7 @@ class SpatialMean(SpatialAggregation):
                 continue
             data = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(data)
-            total[sl] += np.where(valid, data, 0.0)
+            total[sl] += _mask_nan(data)
             count[sl] += valid
         with np.errstate(invalid="ignore"):
             return np.where(count > 0, total / count, 0.0)
@@ -232,7 +237,7 @@ class SpatialVariance(SpatialAggregation):
                 continue
             x = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(x)
-            x_clean = _replace_nan_with_zero(x)
+            x_clean = _mask_nan(x)
             next_count = count[sl] + valid
             delta = np.where(valid, x_clean - mean[sl], 0.0)
             denom = np.where(next_count > 0, next_count, 1.0)
@@ -293,7 +298,7 @@ class SpatialOverlapAdd(SpatialAggregation):
             )
             x = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(x)
-            acc[sl] += _replace_nan_with_zero(x) * w * valid
+            acc[sl] += _mask_nan(x) * w * valid
             wsum[sl] += w * valid
         if not self.normalize_by_window:
             return acc
@@ -360,7 +365,7 @@ class SpatialOverlapAdd(SpatialAggregation):
             )
             x = np.asarray(p.data, dtype=np.float32)
             valid = ~np.isnan(x)
-            rec[sl] = np.asarray(rec[sl]) + _replace_nan_with_zero(x) * w * valid
+            rec[sl] = np.asarray(rec[sl]) + _mask_nan(x) * w * valid
             wsum[sl] = np.asarray(wsum[sl]) + w * valid
         if self.normalize_by_window:
             arr = np.asarray(rec[:])

@@ -22,6 +22,13 @@ from geopatcher import (
 
 
 class FlakyRasterField:
+    """RasterField wrapper that fails selected anchors before succeeding.
+
+    `failures_by_anchor[(row, col)] = n` means the first `n` reads for that
+    anchor raise `exception_type`, then later reads delegate to the wrapped
+    field. This keeps retry/skip/mask tests deterministic.
+    """
+
     def __init__(
         self,
         wrapped: RasterField,
