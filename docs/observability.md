@@ -38,14 +38,19 @@ from tqdm import tqdm
 
 
 class TqdmHook:
+    def __init__(self) -> None:
+        self.pbar = None
+
     def on_split_start(self, n_anchors: int) -> None:
         self.pbar = tqdm(total=None if n_anchors < 0 else n_anchors)
 
     def on_patch_done(self, anchor: Any, runtime_s: float, bytes_: int) -> None:
-        self.pbar.update(1)
+        if self.pbar is not None:
+            self.pbar.update(1)
 
     def on_split_end(self) -> None:
-        self.pbar.close()
+        if self.pbar is not None:
+            self.pbar.close()
 
 
 for patch in patcher.split(field, hooks=[TqdmHook()]):
@@ -63,7 +68,7 @@ from opentelemetry import trace
 class OpenTelemetryHook:
     def __init__(self, tracer: trace.Tracer) -> None:
         self.tracer = tracer
-        self.spans = {}
+        self.spans: dict[str, trace.Span] = {}
 
     def on_patch_start(self, anchor: Any) -> None:
         span = self.tracer.start_span("geopatcher.patch")

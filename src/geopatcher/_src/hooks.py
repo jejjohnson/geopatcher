@@ -44,9 +44,9 @@ def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
 
     Patcher methods call this after materialising user-provided iterables with
     `_as_hooks`, so generator-backed hook lists are safe to reuse across all
-    callbacks in a split or merge lifecycle. The warning `stacklevel` assumes a
-    direct call from a patcher method or helper so users see the patcher call
-    site rather than this internal dispatcher.
+    callbacks in a split or merge lifecycle. The warning `stacklevel` points to
+    the direct `_dispatch` caller, which is usually the patcher method or
+    private helper that emitted the callback.
 
     Hook failures are intentionally downgraded to warnings: callbacks are
     observability side effects and must not change patcher correctness.

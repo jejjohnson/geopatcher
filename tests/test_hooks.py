@@ -114,5 +114,35 @@ def test_hook_errors_warn_without_aborting_split(
     assert len(patches) == 16
 
 
+class ErrorRecordingHook:
+    def __init__(self) -> None:
+        self.errors: list[tuple[object, Exception]] = []
+
+    def on_error(self, anchor: object, exc: Exception) -> None:
+        self.errors.append((anchor, exc))
+
+
+def test_patch_errors_dispatch_on_error(
+    field: RasterField, patcher: SpatialPatcher
+) -> None:
+    class FailingField:
+        domain = field.domain
+
+        def select(self, indexer: object) -> object:
+            raise ValueError("boom")
+
+        def with_data(self, array: object) -> object:
+            return array
+
+    hook = ErrorRecordingHook()
+
+    with pytest.raises(ValueError, match="boom"):
+        list(patcher.split(FailingField(), hooks=[hook]))
+
+    assert len(hook.errors) == 1
+    assert hook.errors[0][0] is not None
+    assert isinstance(hook.errors[0][1], ValueError)
+
+
 def test_protocol_is_public() -> None:
     assert PatcherHook.__name__ == "PatcherHook"

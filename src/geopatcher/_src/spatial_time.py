@@ -262,6 +262,8 @@ class SpatioTemporalPatcher:
         ):
             # Progress totals are best-effort only; if asking the spatial
             # sampler for a count touches a backend that fails, keep splitting.
+            # These cases cover missing shape metadata, unsupported sampler
+            # counts, and invalid geometry/backend state.
             return UNKNOWN_TOTAL
 
     def get_config(self) -> dict[str, Any]:
