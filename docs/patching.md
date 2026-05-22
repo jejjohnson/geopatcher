@@ -34,6 +34,32 @@ stitched = patcher.merge(outputs_as_patches, field.domain)
 `split` is an iterator by design — streaming is the default; materialise
 with `list(...)` when convenient.
 
+## Boundary policy
+
+What happens when an anchor sits close enough to the edge that the
+neighborhood would overflow the domain? `SpatialRectangular` exposes
+this as a first-class parameter (issue #19):
+
+```python
+geom = SpatialRectangular(size=(256, 256), boundary="pad")
+```
+
+| Mode | Behavior |
+|------|----------|
+| `"drop"` (default) | Sampler clips so overflowing anchors are never emitted. Edge residual is silently dropped — exactly the pre-issue-19 behavior. |
+| `"pad"` | Edge anchors are emitted; the raster `Field` reads with `boundless=True` so the patch is the full geometry size, padded in the overflow region with the reader's nodata. |
+| `"shrink"` | Edge anchors are emitted; the geometry clips the returned Window so the patch is *smaller* at the edge. Weights crop to match. |
+| `"raise"` | Edge anchors are emitted; `SpatialPatcher.split` raises a `ValueError` on the first overflow. Useful with `SpatialExplicit` when the caller wants strict edge handling. |
+
+`"reflect"` and a fully aggregation-aware `"pad"` (zero-weight mask in
+the overflow region for COLA-correct stitching) are planned follow-ups —
+see issue #19.
+
+Only `SpatialRectangular` on raster domains honors the parameter in v0.x;
+graph and polygon geometries always behave as if `"drop"` (their natural
+clipping is already correct), and `GridDomain` support is pending an
+xarray-pad story.
+
 ## Protocols: `Field` and `Domain`
 
 The Patcher consumes a `Field` (something with `domain`, `select(indexer)`,

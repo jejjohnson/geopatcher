@@ -56,13 +56,22 @@ class SpatialRegularStride(SpatialSampler):
     step: int | tuple[int, ...]
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
+        boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
             sh, sw = self._broadcast(2)
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
-            for r in range(0, max(h - ph + 1, 1), sh):
-                for c in range(0, max(w - pw + 1, 1), sw):
+            # "drop": stop where the full patch still fits in-domain.
+            # "pad"/"shrink"/"raise": extend up to the last anchor that
+            # still falls inside the domain (overflow is the geometry /
+            # patcher's responsibility from here on).
+            if boundary == "drop":
+                stop_h, stop_w = max(h - ph + 1, 1), max(w - pw + 1, 1)
+            else:
+                stop_h, stop_w = h, w
+            for r in range(0, stop_h, sh):
+                for c in range(0, stop_w, sw):
                     yield (r, c)
             return
         if isinstance(domain, GridDomain):

@@ -19,11 +19,15 @@ Five geometries:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 
 from geopatcher._src.domains import GridDomain, PointDomain, VectorDomain
+
+
+BoundaryMode = Literal["drop", "pad", "shrink", "raise"]
+_VALID_BOUNDARY_MODES: tuple[str, ...] = ("drop", "pad", "shrink", "raise")
 
 
 def _is_raster_domain(domain: Any) -> bool:
@@ -79,17 +83,39 @@ class SpatialRectangular(SpatialGeometry):
     Args:
         size: For raster, ``(height, width)`` in pixels. For grid, one
             length per declared dim in the domain's coord order.
+        boundary: How to treat anchors whose patch would overflow the
+            domain edge. ``"drop"`` (default — current behavior) clips
+            the sampler so overflowing anchors are never placed.
+            ``"pad"`` emits edge anchors and relies on the field's
+            boundless read to fill out-of-bounds pixels (typically with
+            the reader's nodata). ``"shrink"`` clips the returned Window
+            so the patch becomes smaller at the edge. ``"raise"`` emits
+            edge anchors and raises at split time. See `BoundaryMode`.
+            Only honored on raster domains in v0.x; GridDomain treats
+            every mode as ``"drop"`` until an xarray-pad story lands.
     """
 
     size: tuple[int, ...]
+    boundary: BoundaryMode = "drop"
+
+    def __post_init__(self) -> None:
+        if self.boundary not in _VALID_BOUNDARY_MODES:
+            raise ValueError(
+                f"invalid boundary mode {self.boundary!r}; "
+                f"expected one of {_VALID_BOUNDARY_MODES}"
+            )
 
     def neighborhood(self, domain: Any, anchor: Any) -> Any:
         if _is_raster_domain(domain):
             from rasterio.windows import Window
 
             row_off, col_off = int(anchor[0]), int(anchor[1])
-            h, w = int(self.size[-2]), int(self.size[-1])
-            return Window(col_off=col_off, row_off=row_off, width=w, height=h)
+            ph, pw = int(self.size[-2]), int(self.size[-1])
+            if self.boundary == "shrink":
+                dh, dw = int(domain.shape[-2]), int(domain.shape[-1])
+                ph = min(ph, max(dh - row_off, 0))
+                pw = min(pw, max(dw - col_off, 0))
+            return Window(col_off=col_off, row_off=row_off, width=pw, height=ph)
         if isinstance(domain, GridDomain):
             dims = list(domain.coords)
             return {
@@ -101,7 +127,7 @@ class SpatialRectangular(SpatialGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"size": list(self.size)}
+        return {"size": list(self.size), "boundary": self.boundary}
 
 
 @dataclass(eq=False)

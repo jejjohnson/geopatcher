@@ -69,10 +69,13 @@ class SpatialPatcher:
             base_weights = self.window.weights(self.geometry)
         except TypeError:
             base_weights = None
+        boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
             indices = self.geometry.neighborhood(domain, anchor)
+            if boundary == "raise":
+                _raise_if_overflows(indices, domain)
             data = field.select(_unwrap_for_select(indices))
-            weights = _build_weights(indices, base_weights)
+            weights = _build_weights(indices, base_weights, boundary=boundary)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
@@ -120,10 +123,13 @@ class AsyncSpatialPatcher:
             base_weights = self.window.weights(self.geometry)
         except TypeError:
             base_weights = None
+        boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
             indices = self.geometry.neighborhood(domain, anchor)
+            if boundary == "raise":
+                _raise_if_overflows(indices, domain)
             data = await field.select(_unwrap_for_select(indices))
-            weights = _build_weights(indices, base_weights)
+            weights = _build_weights(indices, base_weights, boundary=boundary)
             yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
@@ -146,17 +152,51 @@ def _unwrap_for_select(indices: Any) -> Any:
     return indices
 
 
-def _build_weights(indices: Any, base_weights: np.ndarray | None) -> Any:
+def _build_weights(
+    indices: Any,
+    base_weights: np.ndarray | None,
+    *,
+    boundary: str = "drop",
+) -> Any:
     """Resolve a patch's weight array.
 
     If the indices is a `_MaskedWindow` (SpatialPolygonIntersection on a raster),
     return the interior mask — the window controls *which pixels count*,
     not how heavily they're tapered. Otherwise return the geometry-shaped
-    base weights from `SpatialWindow.weights`.
+    base weights from `SpatialWindow.weights`, cropped to the actual window
+    size when boundary == "shrink" (because the window was clipped).
     """
     if isinstance(indices, _MaskedWindow):
         return indices.mask
+    if boundary == "shrink" and base_weights is not None:
+        h = getattr(indices, "height", None)
+        w = getattr(indices, "width", None)
+        if h is not None and w is not None:
+            bh, bw = base_weights.shape[-2:]
+            if (h, w) != (bh, bw):
+                return base_weights[..., : int(h), : int(w)]
     return base_weights
+
+
+def _raise_if_overflows(indices: Any, domain: Any) -> None:
+    """Raise ``ValueError`` if ``indices`` extends past ``domain``.
+
+    Used by `SpatialPatcher.split` when the geometry's ``boundary``
+    policy is ``"raise"``. Only meaningful for raster-shaped indices
+    (rasterio `Window`); non-raster indices return early.
+    """
+    if not (hasattr(indices, "row_off") and hasattr(indices, "col_off")):
+        return
+    if not (hasattr(domain, "shape") and len(domain.shape) >= 2):
+        return
+    dh, dw = int(domain.shape[-2]), int(domain.shape[-1])
+    r0, c0 = int(indices.row_off), int(indices.col_off)
+    rh, cw = int(indices.height), int(indices.width)
+    if r0 < 0 or c0 < 0 or r0 + rh > dh or c0 + cw > dw:
+        raise ValueError(
+            f"patch window {indices!r} overflows the domain shape "
+            f"({dh}, {dw}); set boundary='pad' or 'shrink' to allow."
+        )
 
 
 # Re-export `_is_raster_domain` to discourage cross-imports from geometry.py.
