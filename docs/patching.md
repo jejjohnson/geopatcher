@@ -34,6 +34,22 @@ stitched = patcher.merge(outputs_as_patches, field.domain)
 `split` is an iterator by design — streaming is the default; materialise
 with `list(...)` when convenient.
 
+## Determinism (stochastic samplers)
+
+`SpatialRandom`, `SpatialJitteredStride`, `SpatialPoissonDisk`, and
+`TemporalRandom` accept a `seed: int | None`. The contract (issue #18,
+pinned by `tests/test_determinism.py`):
+
+| `seed` value | Behavior |
+|---|---|
+| `int` | Two samplers with the same config return bit-identical anchors across calls *and* across instances. Use this whenever you need reproducible runs (ML evaluation, CI, journal-resume). |
+| `None` (default) | The sampler re-seeds from OS entropy on every call; anchors will differ. Pick this for casual exploration when reproducibility doesn't matter. |
+
+The Hypothesis round-trip suite (`tests/test_roundtrip.py`, issue #21)
+leans on the `int` contract — given a seed, it shrinks failing
+examples to the minimal `(shape, stride, seed)` triple and replays
+them deterministically.
+
 ## Boundary policy
 
 What happens when an anchor sits close enough to the edge that the

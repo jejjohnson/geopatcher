@@ -107,7 +107,12 @@ class SpatialJitteredStride(SpatialSampler):
     Args:
         step: As for `SpatialRegularStride`.
         jitter: SpatialMax jitter in step-units (0.0 = no jitter, 0.5 = ± half a step).
-        seed: Optional integer seed for reproducible draws.
+        seed: Integer seed for reproducible draws. When set, two
+            samplers with the same configuration return bit-identical
+            anchors across calls and across instances (the contract
+            tested in ``tests/test_determinism.py`` for issue #18).
+            ``None`` (the default) re-seeds from OS entropy on every
+            call — anchors will differ between calls.
     """
 
     step: int | tuple[int, ...]
@@ -167,7 +172,12 @@ class SpatialRandom(SpatialSampler):
 
     Args:
         n_samples: Number of anchors to draw.
-        seed: Optional integer seed for reproducible draws.
+        seed: Integer seed for reproducible draws. When set, two
+            samplers with the same configuration return bit-identical
+            anchors across calls and across instances (the contract
+            tested in ``tests/test_determinism.py`` for issue #18).
+            ``None`` (the default) re-seeds from OS entropy on every
+            call — anchors will differ between calls.
     """
 
     n_samples: int
