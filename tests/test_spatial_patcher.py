@@ -123,7 +123,7 @@ class TestSplit:
             aggregation=SpatialOverlapAdd(),
             on_error="retry",
             max_retries=2,
-            # `retry_on` accepts class names from config as well as classes.
+            # Cover class-name config; the exhausted-retry test covers classes.
             retry_on=("OSError",),
         )
 
@@ -145,6 +145,7 @@ class TestSplit:
             aggregation=SpatialOverlapAdd(),
             on_error="retry",
             max_retries=1,
+            # Cover class objects; the transient-success test covers names.
             retry_on=(OSError,),
         )
 

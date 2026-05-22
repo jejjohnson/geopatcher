@@ -203,7 +203,7 @@ class SpatialMean(SpatialAggregation):
                 continue
             data = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(data)
-            total[sl] += _nan_to_zero(data)
+            total[sl] += np.where(valid, data, 0.0)
             count[sl] += valid
         with np.errstate(invalid="ignore"):
             return np.where(count > 0, total / count, 0.0)

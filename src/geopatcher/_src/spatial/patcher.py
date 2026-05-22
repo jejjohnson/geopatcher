@@ -326,6 +326,7 @@ def _build_patch_with_policy(
                 field, domain, anchor, indices, base_weights, boundary
             )
         except Exception as exc:
+            # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
             if on_error == "raise":
                 raise
             _record_patch_error(errors, anchor, exc, retry_count)
@@ -338,7 +339,6 @@ def _build_patch_with_policy(
                     continue
                 raise
             return None
-    return None
 
 
 async def _build_patch_async_with_policy(
@@ -362,6 +362,7 @@ async def _build_patch_async_with_policy(
                 field, domain, anchor, indices, base_weights, boundary
             )
         except Exception as exc:
+            # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
             if on_error == "raise":
                 raise
             _record_patch_error(errors, anchor, exc, retry_count)
@@ -374,7 +375,6 @@ async def _build_patch_async_with_policy(
                     continue
                 raise
             return None
-    return None
 
 
 def _record_patch_error(
