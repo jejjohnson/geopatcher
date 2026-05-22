@@ -16,8 +16,9 @@ Public surface re-exports:
 Operator-graph wrappers (`GridSampler`, `ApplyToChips`, `Stitch`) that bridge
 the patcher into the `pipekit` composition framework live in the optional
 `geopatcher.integrations.pipekit` submodule, gated behind the `[pipekit]`
-extra (``pip install 'geopatcher[pipekit]'``). The patcher core itself
-remains framework-free.
+extra. While `pipekit` is pre-PyPI, install with ``uv sync --extra pipekit``
+(or ``uv pip install`` — see the "Pre-PyPI install" section of the README).
+The patcher core itself remains framework-free.
 """
 
 from __future__ import annotations

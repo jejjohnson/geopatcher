@@ -15,7 +15,13 @@ so a sliding-window inference pipeline composes inside a `Sequential` or
         Stitch(SpatialOverlapAdd(), domain=field.domain),
     ])
 
-Optional extra: ``pip install 'geopatcher[pipekit]'`` to pull in pipekit.
+Optional extra: install the ``[pipekit]`` extra to pull in pipekit.
+While `pipekit` is pre-PyPI, use ``uv sync --extra pipekit`` (or
+``uv pip install "git+https://github.com/jejjohnson/geopatcher@main#egg=geopatcher[pipekit]"``)
+so uv can resolve the git source declared in this repo's
+``pyproject.toml``. Once `pipekit` ships to PyPI, plain
+``pip install 'geopatcher[pipekit]'`` will work too.
+
 Importing this module without pipekit installed raises a friendly
 ``ImportError`` pointing at the right extra.
 """
@@ -30,7 +36,9 @@ try:
 except ImportError as _e:  # pragma: no cover - exercised when [pipekit] is missing
     raise ImportError(
         "geopatcher.integrations.pipekit requires the `pipekit` package. "
-        "Install with `pip install 'geopatcher[pipekit]'` (or `pip install pipekit`)."
+        "Install the [pipekit] extra with `uv sync --extra pipekit` "
+        "(or `uv pip install 'geopatcher[pipekit]'`); plain "
+        "`pip install` will work once pipekit reaches PyPI."
     ) from _e
 
 from geopatcher import Patch, SpatialAggregation, SpatialPatcher
@@ -111,9 +119,17 @@ class Stitch(Operator):
         domain: The `Domain` the patches were drawn from. Required
             because the aggregation's output shape is fixed by the
             domain.
+
+    Note:
+        ``forbid_in_yaml = True`` — `domain` is a runtime `Domain`
+        protocol object (CRS, affine transform, shape) and isn't in
+        general JSON-serialisable, so the constructor cannot be
+        round-tripped from `get_config()` alone. `get_config()` emits a
+        debug record (class names + nested configs) for introspection /
+        logging, not for replay.
     """
 
-    forbid_in_yaml: ClassVar[bool] = False
+    forbid_in_yaml: ClassVar[bool] = True
 
     def __init__(self, aggregation: SpatialAggregation, domain: Any) -> None:
         self.aggregation = aggregation
@@ -127,7 +143,8 @@ class Stitch(Operator):
             "aggregation": {
                 "class": type(self.aggregation).__name__,
                 "config": self.aggregation.get_config(),
-            }
+            },
+            "domain": {"class": type(self.domain).__name__},
         }
 
 

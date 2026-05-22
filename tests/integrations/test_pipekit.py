@@ -89,7 +89,7 @@ class TestStitchInSequential:
             [
                 GridSampler(patcher),
                 ApplyToChips(double),
-                Stitch(SpatialOverlapAdd(), domain=field.reader),
+                Stitch(SpatialOverlapAdd(), domain=field.domain),
             ]
         )
         result = pipe(field)

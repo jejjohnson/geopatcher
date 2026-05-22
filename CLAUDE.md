@@ -17,7 +17,10 @@ library — it's a standalone framework. The optional
 `geopatcher.integrations.pipekit` submodule (gated behind the `[pipekit]`
 extra) provides `GridSampler` / `ApplyToChips` / `Stitch` wrappers that
 plug a `SpatialPatcher` into a [pipekit](https://github.com/jejjohnson/pipekit)
-`Sequential` pipeline; install with `pip install 'geopatcher[pipekit]'`.
+`Sequential` pipeline. While `pipekit` is pre-PyPI, install with
+`uv sync --extra pipekit` (or `uv pip install` — see the README's
+"Pre-PyPI install" section). Plain `pip install 'geopatcher[pipekit]'`
+will work once `pipekit` reaches PyPI.
 
 ## Common Commands
 

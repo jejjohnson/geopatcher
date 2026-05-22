@@ -57,8 +57,13 @@ pip install 'geopatcher[point]'          # XvecField
 pip install 'geopatcher[xarray-raster]'  # RioXarrayField
 pip install 'geopatcher[streaming]'      # SpatialOverlapAdd(streaming=True)
 pip install 'geopatcher[patch-full]'     # all substrate adapters
-pip install 'geopatcher[pipekit]'        # geopatcher.integrations.pipekit
+pip install 'geopatcher[pipekit]'        # geopatcher.integrations.pipekit (once pipekit lands on PyPI)
 ```
+
+> **Pre-PyPI note.** `pipekit` isn't on PyPI yet, so the `[pipekit]`
+> extra can't be resolved by plain `pip install` today. See [Pre-PyPI
+> install](#pre-pypi-install-from-github) below for the `uv`-based
+> workflow that works in the meantime.
 
 ### Pre-PyPI install (from GitHub)
 
