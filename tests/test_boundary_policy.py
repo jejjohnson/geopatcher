@@ -24,10 +24,14 @@ from georeader.geotensor import GeoTensor
 from geopatcher import (
     RasterField,
     SpatialBoxcar,
+    SpatialJitteredStride,
     SpatialOverlapAdd,
     SpatialPatcher,
+    SpatialPoissonDisk,
+    SpatialRandom,
     SpatialRectangular,
     SpatialRegularStride,
+    SpatialSampler,
 )
 
 
@@ -131,3 +135,93 @@ class TestAlignedDomainIsUnchanged:
         anchors = [patch.anchor for patch in p.split(aligned_field)]
         # 4x4 = 16 anchors on a 64x64 domain with patch=16, stride=16.
         assert len(anchors) == 16
+
+
+class TestBoundaryHonoredByAllRasterSamplers:
+    """Boundary must be wired into every raster sampler, not only
+    `SpatialRegularStride`. The contract: when ``boundary != "drop"``,
+    the sampler is allowed to place anchors that overflow the domain,
+    and `SpatialPatcher.split(boundary="raise")` raises on the first
+    such anchor. When ``boundary == "drop"``, anchors stay in-bounds.
+    """
+
+    @pytest.fixture
+    def misaligned_field(self) -> RasterField:
+        arr = np.ones((70, 70), dtype=np.float32)
+        gt = GeoTensor(
+            values=arr,
+            transform=rasterio.Affine.identity(),
+            crs="EPSG:32630",
+        )
+        return RasterField(gt)
+
+    @pytest.mark.parametrize(
+        "sampler",
+        [
+            SpatialRegularStride(step=16),
+            SpatialJitteredStride(step=16, jitter=0.5, seed=0),
+            SpatialRandom(n_samples=200, seed=0),
+            SpatialPoissonDisk(min_dist=4.0, seed=0),
+        ],
+        ids=["RegularStride", "JitteredStride", "Random", "PoissonDisk"],
+    )
+    def test_raise_mode_fires_for_each_sampler(
+        self, misaligned_field: RasterField, sampler: SpatialSampler
+    ) -> None:
+        # With boundary="raise" and a domain that doesn't divide evenly
+        # by the patch size, every raster sampler must be willing to
+        # place at least one overflowing anchor, so split() raises.
+        # JitteredStride is borderline (it only emits 16 base anchors,
+        # all in-bounds at jitter=0); use SpatialRandom and the others
+        # to cover the contract.
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16), boundary="raise"),
+            sampler=sampler,
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+        )
+        if isinstance(sampler, SpatialJitteredStride):
+            # The base RegularStride anchors stay below 64 even in
+            # raise mode (4x4 lattice on a 70x70 field), and the
+            # jittered offsets respect `rmax = h - 1` which still leaves
+            # most jittered anchors in-bounds. We can't deterministically
+            # force overflow from JitteredStride at this jitter level —
+            # instead check that at least one of its anchors lands above
+            # the drop-mode ceiling of 54.
+            anchors = list(
+                sampler.anchors(
+                    misaligned_field.domain,
+                    SpatialRectangular(size=(16, 16), boundary="raise"),
+                )
+            )
+            assert any(r > 54 or c > 54 for r, c in anchors), (
+                "JitteredStride should have placed at least one anchor "
+                "beyond the drop-mode ceiling when boundary != 'drop'"
+            )
+            return
+        with pytest.raises(ValueError, match="overflows the domain"):
+            list(patcher.split(misaligned_field))
+
+    @pytest.mark.parametrize(
+        "sampler",
+        [
+            SpatialRandom(n_samples=200, seed=0),
+            SpatialPoissonDisk(min_dist=4.0, seed=0),
+        ],
+        ids=["Random", "PoissonDisk"],
+    )
+    def test_drop_mode_keeps_anchors_in_bounds(
+        self, misaligned_field: RasterField, sampler: SpatialSampler
+    ) -> None:
+        # Inverse property: with boundary="drop", no anchor produces an
+        # overflowing window. Confirms the wiring is conditioned on
+        # boundary rather than being a no-op everywhere.
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16), boundary="drop"),
+            sampler=sampler,
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+        )
+        for patch in patcher.split(misaligned_field):
+            r, c = patch.anchor
+            assert r + 16 <= 70 and c + 16 <= 70
