@@ -56,13 +56,22 @@ class SpatialRegularStride(SpatialSampler):
     step: int | tuple[int, ...]
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
+        boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
             sh, sw = self._broadcast(2)
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
-            for r in range(0, max(h - ph + 1, 1), sh):
-                for c in range(0, max(w - pw + 1, 1), sw):
+            # "drop": stop where the full patch still fits in-domain.
+            # "pad"/"shrink"/"raise": extend up to the last anchor that
+            # still falls inside the domain (overflow is the geometry /
+            # patcher's responsibility from here on).
+            if boundary == "drop":
+                stop_h, stop_w = max(h - ph + 1, 1), max(w - pw + 1, 1)
+            else:
+                stop_h, stop_w = h, w
+            for r in range(0, stop_h, sh):
+                for c in range(0, stop_w, sw):
                     yield (r, c)
             return
         if isinstance(domain, GridDomain):
@@ -108,14 +117,21 @@ class SpatialJitteredStride(SpatialSampler):
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
         rng = np.random.default_rng(self.seed)
         base = SpatialRegularStride(step=self.step)
+        boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             sh, sw = base._broadcast(2)
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
-            # Maximum valid anchor so the patch still fits in the field.
-            rmax = max(h - ph, 0)
-            cmax = max(w - pw, 0)
+            # Clamp jittered anchors so the patch still fits in the
+            # field — except when the geometry's boundary policy invites
+            # overflow (then the patcher handles the edge).
+            if boundary == "drop":
+                rmax = max(h - ph, 0)
+                cmax = max(w - pw, 0)
+            else:
+                rmax = h - 1
+                cmax = w - 1
             for r, c in base.anchors(domain, geometry):
                 dr = int(rng.uniform(-self.jitter, self.jitter) * sh)
                 dc = int(rng.uniform(-self.jitter, self.jitter) * sw)
@@ -159,12 +175,20 @@ class SpatialRandom(SpatialSampler):
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
         rng = np.random.default_rng(self.seed)
+        boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
-            rs = rng.integers(0, max(h - ph + 1, 1), size=self.n_samples)
-            cs = rng.integers(0, max(w - pw + 1, 1), size=self.n_samples)
+            # "drop": draw only from the fit-only range so the patch is
+            # fully in-domain. Non-"drop": draw across the whole domain
+            # — the patcher / geometry handles edge overflow.
+            if boundary == "drop":
+                rhi, chi = max(h - ph + 1, 1), max(w - pw + 1, 1)
+            else:
+                rhi, chi = h, w
+            rs = rng.integers(0, rhi, size=self.n_samples)
+            cs = rng.integers(0, chi, size=self.n_samples)
             for r, c in zip(rs, cs, strict=True):
                 yield (int(r), int(c))
             return
@@ -214,16 +238,18 @@ class SpatialPoissonDisk(SpatialSampler):
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
         rng = np.random.default_rng(self.seed)
+        boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
-            yield from _bridson_2d(
-                (max(h - ph + 1, 1), max(w - pw + 1, 1)),
-                self.min_dist,
-                self.max_tries,
-                rng,
-            )
+            # See SpatialRandom — "drop" restricts to the fit-only
+            # region, non-"drop" lets Bridson cover the whole domain.
+            if boundary == "drop":
+                region = (max(h - ph + 1, 1), max(w - pw + 1, 1))
+            else:
+                region = (h, w)
+            yield from _bridson_2d(region, self.min_dist, self.max_tries, rng)
             return
         if isinstance(domain, PointDomain):
             yield from _bridson_subset(
