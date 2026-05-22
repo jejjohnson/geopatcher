@@ -38,6 +38,7 @@ from geopatcher._src.spatial.geometry import (
 )
 from geopatcher._src.spatial.patcher import (
     AsyncSpatialPatcher,
+    PatchErrorRecord,
     SpatialPatcher,
 )
 from geopatcher._src.spatial.sampler import (
@@ -60,6 +61,7 @@ from geopatcher._src.spatial.window import (
 
 __all__ = [
     "AsyncSpatialPatcher",
+    "PatchErrorRecord",
     "SpatialAggregation",
     "SpatialApproxCardinality",
     "SpatialApproxMode",

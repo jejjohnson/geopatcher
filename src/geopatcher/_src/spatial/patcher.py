@@ -12,9 +12,10 @@ See ``design.md`` §1 for the four-axis framework.
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import AsyncIterator, Iterable, Iterator
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import numpy as np
 
@@ -33,6 +34,28 @@ from geopatcher._src.spatial.sampler import SpatialSampler
 from geopatcher._src.spatial.window import SpatialWindow
 
 
+OnErrorPolicy = Literal["raise", "skip", "mask", "retry"]
+
+
+@dataclass(eq=False)
+class PatchErrorRecord:
+    """A failed patch read recorded by `SpatialPatcher.split`.
+
+    Args:
+        anchor: Anchor whose patch failed to build.
+        kind: Exception class name.
+        message: Exception message.
+        traceback: Formatted traceback for debugging.
+        retry_count: Number of retries already attempted for this failure.
+    """
+
+    anchor: Any
+    kind: str
+    message: str
+    traceback: str
+    retry_count: int
+
+
 @dataclass(eq=False)
 class SpatialPatcher:
     """The four-axis spatial Patcher.
@@ -42,6 +65,13 @@ class SpatialPatcher:
         sampler: Where anchors go.
         window: Boundary treatment / per-pixel weights.
         aggregation: Local → global merge strategy.
+        on_error: Patch-read error policy. ``"raise"`` preserves the
+            historical fail-fast behavior, ``"skip"`` logs and omits the
+            failed anchor, ``"mask"`` emits a NaN-valued patch for the
+            failed anchor, and ``"retry"`` retries matching exceptions up to
+            `max_retries` before logging and skipping.
+        max_retries: Number of retries when `on_error` is ``"retry"``.
+        retry_on: Exception classes or class names that should be retried.
 
     Examples:
         Sliding-window inference over a raster::
@@ -61,6 +91,13 @@ class SpatialPatcher:
     sampler: SpatialSampler
     window: SpatialWindow
     aggregation: SpatialAggregation
+    on_error: OnErrorPolicy = "raise"
+    max_retries: int = 0
+    retry_on: tuple[type[BaseException] | str, ...] = (Exception,)
+    errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        _validate_error_policy(self.on_error, self.max_retries)
 
     def split(self, field: Field) -> Iterator[Patch]:
         """Yield patches lazily — one per anchor placed by the sampler."""
@@ -68,9 +105,20 @@ class SpatialPatcher:
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
-            yield _build_patch(
-                field, domain, anchor, self.geometry, base_weights, boundary
+            patch = _build_patch_with_policy(
+                field=field,
+                domain=domain,
+                anchor=anchor,
+                geometry=self.geometry,
+                base_weights=base_weights,
+                boundary=boundary,
+                on_error=self.on_error,
+                max_retries=self.max_retries,
+                retry_on=self.retry_on,
+                errors=self.errors,
             )
+            if patch is not None:
+                yield patch
 
     def patch_at(self, field: Field, anchor: Any) -> Patch:
         """Read a single `Patch` at a specific anchor.
@@ -152,6 +200,11 @@ class SpatialPatcher:
                 "class": type(self.aggregation).__name__,
                 "config": self.aggregation.get_config(),
             },
+            "on_error": self.on_error,
+            "max_retries": self.max_retries,
+            "retry_on": [
+                exc if isinstance(exc, str) else exc.__name__ for exc in self.retry_on
+            ],
         }
 
 
@@ -167,15 +220,33 @@ class AsyncSpatialPatcher:
     sampler: SpatialSampler
     window: SpatialWindow
     aggregation: SpatialAggregation
+    on_error: OnErrorPolicy = "raise"
+    max_retries: int = 0
+    retry_on: tuple[type[BaseException] | str, ...] = (Exception,)
+    errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        _validate_error_policy(self.on_error, self.max_retries)
 
     async def split(self, field: AsyncField) -> AsyncIterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
-            yield await _build_patch_async(
-                field, domain, anchor, self.geometry, base_weights, boundary
+            patch = await _build_patch_async_with_policy(
+                field=field,
+                domain=domain,
+                anchor=anchor,
+                geometry=self.geometry,
+                base_weights=base_weights,
+                boundary=boundary,
+                on_error=self.on_error,
+                max_retries=self.max_retries,
+                retry_on=self.retry_on,
+                errors=self.errors,
             )
+            if patch is not None:
+                yield patch
 
     async def patch_at(self, field: AsyncField, anchor: Any) -> Patch:
         """Read a single `Patch` at a specific anchor.
@@ -224,6 +295,117 @@ def _safe_base_weights(
         return None
 
 
+def _validate_error_policy(on_error: str, max_retries: int) -> None:
+    if on_error not in ("raise", "skip", "mask", "retry"):
+        raise ValueError(
+            "invalid on_error policy "
+            f"{on_error!r}; expected 'raise', 'skip', 'mask', or 'retry'"
+        )
+    if max_retries < 0:
+        raise ValueError("max_retries must be non-negative")
+
+
+def _build_patch_with_policy(
+    *,
+    field: Field,
+    domain: Any,
+    anchor: Any,
+    geometry: SpatialGeometry,
+    base_weights: np.ndarray | None,
+    boundary: str,
+    on_error: OnErrorPolicy,
+    max_retries: int,
+    retry_on: tuple[type[BaseException] | str, ...],
+    errors: list[PatchErrorRecord],
+) -> Patch | None:
+    retries = max_retries if on_error == "retry" else 0
+    indices = geometry.neighborhood(domain, anchor)
+    for retry_count in range(retries + 1):
+        try:
+            return _build_patch_from_indices(
+                field, domain, anchor, indices, base_weights, boundary
+            )
+        except Exception as exc:
+            if on_error == "raise":
+                raise
+            _record_patch_error(errors, anchor, exc, retry_count)
+            if on_error == "mask":
+                return _build_mask_patch(
+                    domain, anchor, indices, base_weights, boundary
+                )
+            if on_error == "retry" and retry_count < retries:
+                if _matches_retry_on(exc, retry_on):
+                    continue
+                raise
+            return None
+    return None
+
+
+async def _build_patch_async_with_policy(
+    *,
+    field: AsyncField,
+    domain: Any,
+    anchor: Any,
+    geometry: SpatialGeometry,
+    base_weights: np.ndarray | None,
+    boundary: str,
+    on_error: OnErrorPolicy,
+    max_retries: int,
+    retry_on: tuple[type[BaseException] | str, ...],
+    errors: list[PatchErrorRecord],
+) -> Patch | None:
+    retries = max_retries if on_error == "retry" else 0
+    indices = geometry.neighborhood(domain, anchor)
+    for retry_count in range(retries + 1):
+        try:
+            return await _build_patch_async_from_indices(
+                field, domain, anchor, indices, base_weights, boundary
+            )
+        except Exception as exc:
+            if on_error == "raise":
+                raise
+            _record_patch_error(errors, anchor, exc, retry_count)
+            if on_error == "mask":
+                return _build_mask_patch(
+                    domain, anchor, indices, base_weights, boundary
+                )
+            if on_error == "retry" and retry_count < retries:
+                if _matches_retry_on(exc, retry_on):
+                    continue
+                raise
+            return None
+    return None
+
+
+def _record_patch_error(
+    errors: list[PatchErrorRecord],
+    anchor: Any,
+    exc: BaseException,
+    retry_count: int,
+) -> None:
+    errors.append(
+        PatchErrorRecord(
+            anchor=anchor,
+            kind=type(exc).__name__,
+            message=str(exc),
+            traceback="".join(traceback.format_exception(exc)),
+            retry_count=retry_count,
+        )
+    )
+
+
+def _matches_retry_on(
+    exc: BaseException, retry_on: tuple[type[BaseException] | str, ...]
+) -> bool:
+    for candidate in retry_on:
+        if isinstance(candidate, str):
+            if type(exc).__name__ == candidate:
+                return True
+        elif isinstance(exc, candidate):
+            return True
+    return False
+
+
 def _build_patch(
     field: Field,
     domain: Any,
@@ -234,6 +416,19 @@ def _build_patch(
 ) -> Patch:
     """Single-anchor read pipeline shared by `split` and `patch_at`."""
     indices = geometry.neighborhood(domain, anchor)
+    return _build_patch_from_indices(
+        field, domain, anchor, indices, base_weights, boundary
+    )
+
+
+def _build_patch_from_indices(
+    field: Field,
+    domain: Any,
+    anchor: Any,
+    indices: Any,
+    base_weights: np.ndarray | None,
+    boundary: str,
+) -> Patch:
     if boundary == "raise":
         _raise_if_overflows(indices, domain)
     data = field.select(_unwrap_for_select(indices))
@@ -251,11 +446,67 @@ async def _build_patch_async(
 ) -> Patch:
     """Async mirror of `_build_patch` — awaits `field.select`."""
     indices = geometry.neighborhood(domain, anchor)
+    return await _build_patch_async_from_indices(
+        field, domain, anchor, indices, base_weights, boundary
+    )
+
+
+async def _build_patch_async_from_indices(
+    field: AsyncField,
+    domain: Any,
+    anchor: Any,
+    indices: Any,
+    base_weights: np.ndarray | None,
+    boundary: str,
+) -> Patch:
     if boundary == "raise":
         _raise_if_overflows(indices, domain)
     data = await field.select(_unwrap_for_select(indices))
     weights = _build_weights(indices, base_weights, boundary=boundary)
     return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+
+
+def _build_mask_patch(
+    domain: Any,
+    anchor: Any,
+    indices: Any,
+    base_weights: np.ndarray | None,
+    boundary: str,
+) -> Patch:
+    if boundary == "raise":
+        _raise_if_overflows(indices, domain)
+    weights = _build_weights(indices, base_weights, boundary=boundary)
+    h, w = _indices_hw(indices)
+    prefix = tuple(getattr(domain, "shape", ())[:-2])
+    if prefix:
+        shape = (*prefix, h, w)
+    elif weights is not None:
+        shape = tuple(np.shape(weights))
+    else:
+        shape = (h, w)
+    data = np.full(shape, np.nan, dtype=float)
+    return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+
+
+def _indices_hw(indices: Any) -> tuple[int, int]:
+    if isinstance(indices, _MaskedWindow):
+        indices = indices.window
+    h = getattr(indices, "height", None)
+    w = getattr(indices, "width", None)
+    if h is not None and w is not None:
+        return int(h), int(w)
+    if isinstance(indices, dict):
+        sizes = []
+        for index in indices.values():
+            if (
+                isinstance(index, slice)
+                and index.start is not None
+                and index.stop is not None
+            ):
+                sizes.append(int(index.stop) - int(index.start))
+        if len(sizes) >= 2:
+            return sizes[-2], sizes[-1]
+    raise ValueError(f"cannot infer mask shape for indices {indices!r}")
 
 
 def _unwrap_for_select(indices: Any) -> Any:
@@ -323,6 +574,7 @@ def _raise_if_overflows(indices: Any, domain: Any) -> None:
 # Re-export `_is_raster_domain` to discourage cross-imports from geometry.py.
 __all__ = [
     "AsyncSpatialPatcher",
+    "PatchErrorRecord",
     "SpatialPatcher",
     "_is_raster_domain",
 ]

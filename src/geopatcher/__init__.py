@@ -50,6 +50,7 @@ from geopatcher._src.protocols import (
 )
 from geopatcher._src.spatial import (  # re-export of all spatial concretes + bases
     AsyncSpatialPatcher,
+    PatchErrorRecord,
     SpatialAggregation,
     SpatialApproxCardinality,
     SpatialApproxMode,
@@ -128,6 +129,7 @@ __all__ = [
     "Field",
     "GridDomain",
     "Patch",
+    "PatchErrorRecord",
     "PointDomain",
     "RasterDomain",
     "RasterField",

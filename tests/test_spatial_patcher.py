@@ -11,6 +11,7 @@ from georeader.geotensor import GeoTensor
 
 from geopatcher import (
     Patch,
+    PatchErrorRecord,
     RasterField,
     SpatialBoxcar,
     SpatialOverlapAdd,
@@ -18,6 +19,28 @@ from geopatcher import (
     SpatialRectangular,
     SpatialRegularStride,
 )
+
+
+class FlakyRasterField:
+    def __init__(
+        self,
+        wrapped: RasterField,
+        failures_by_anchor: dict[tuple[int, int], int],
+    ) -> None:
+        self.wrapped = wrapped
+        self.failures_by_anchor = dict(failures_by_anchor)
+        self.attempts: dict[tuple[int, int], int] = {}
+
+    @property
+    def domain(self):
+        return self.wrapped.domain
+
+    def select(self, indices):
+        anchor = (int(indices.row_off), int(indices.col_off))
+        self.attempts[anchor] = self.attempts.get(anchor, 0) + 1
+        if self.attempts[anchor] <= self.failures_by_anchor.get(anchor, 0):
+            raise OSError(f"flaky read at {anchor}")
+        return self.wrapped.select(indices)
 
 
 @pytest.fixture
@@ -69,6 +92,97 @@ class TestSplit:
         n = patcher.n_anchors(field)
         assert n == 16  # 4x4 lattice
         assert n == sum(1 for _ in patcher.split(field))
+
+    def test_on_error_skip_omits_failed_patch(self, field: RasterField) -> None:
+        flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 1})
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="skip",
+        )
+
+        patches = list(patcher.split(flaky))
+
+        assert len(patches) == 15
+        assert (0, 16) not in {p.anchor for p in patches}
+        assert len(patcher.errors) == 1
+        assert isinstance(patcher.errors[0], PatchErrorRecord)
+        assert patcher.errors[0].anchor == (0, 16)
+        assert patcher.errors[0].kind == "OSError"
+
+    def test_on_error_retry_succeeds_after_transient_failures(
+        self, field: RasterField
+    ) -> None:
+        flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 2})
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="retry",
+            max_retries=2,
+            retry_on=("OSError",),
+        )
+
+        patches = list(patcher.split(flaky))
+
+        assert len(patches) == 16
+        assert (0, 16) in {p.anchor for p in patches}
+        assert flaky.attempts[(0, 16)] == 3
+        assert [err.retry_count for err in patcher.errors] == [0, 1]
+
+    def test_on_error_retry_skips_after_retries_exhausted(
+        self, field: RasterField
+    ) -> None:
+        flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 3})
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="retry",
+            max_retries=1,
+            retry_on=(OSError,),
+        )
+
+        patches = list(patcher.split(flaky))
+
+        assert len(patches) == 15
+        assert flaky.attempts[(0, 16)] == 2
+        assert [err.retry_count for err in patcher.errors] == [0, 1]
+
+    def test_on_error_mask_emits_nan_patch(self, field: RasterField) -> None:
+        flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 1})
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="mask",
+        )
+
+        patches = list(patcher.split(flaky))
+
+        assert len(patches) == 16
+        masked = next(p for p in patches if p.anchor == (0, 16))
+        assert masked.data.shape == (16, 16)
+        assert np.isnan(masked.data).all()
+        recon = patcher.merge(patches, field.domain)
+        assert not np.isnan(recon).any()
+        np.testing.assert_allclose(recon[0:16, 16:32], 0.0)
+        assert patcher.errors[0].kind == "OSError"
+
+    def test_invalid_on_error_policy_raises(self, field: RasterField) -> None:
+        with pytest.raises(ValueError, match="invalid on_error policy"):
+            SpatialPatcher(
+                geometry=SpatialRectangular(size=(16, 16)),
+                sampler=SpatialRegularStride(step=16),
+                window=SpatialBoxcar(),
+                aggregation=SpatialOverlapAdd(),
+                on_error="ignore",  # type: ignore[arg-type]
+            )
 
 
 class TestSplitMergeRoundtrip:
