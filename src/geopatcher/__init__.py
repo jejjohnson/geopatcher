@@ -91,6 +91,7 @@ from geopatcher._src.spatial import (  # re-export of all spatial concretes + ba
     SpatialWindow,
 )
 from geopatcher._src.spatial_time import SpatioTemporalPatcher
+from geopatcher._src.stacking import stack_patches
 from geopatcher._src.time import (  # re-export of all temporal concretes + bases
     TemporalAggregation,
     TemporalCausalBoxcar,
@@ -200,6 +201,7 @@ __all__ = [
     "get_strict",
     "set_strict",
     "spatial",
+    "stack_patches",
     "time",
 ]
 

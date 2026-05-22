@@ -60,16 +60,52 @@ class TemporalPatcher:
         arr = np.asarray(series)
         time_len = int(arr.shape[time_axis])
         for anchor in self.sampler.anchors(time_len):
-            window = self.geometry.window(time_len, int(anchor))
-            slices = window if isinstance(window, list) else [window]
-            for s in slices:
-                idx = [slice(None)] * arr.ndim
-                idx[time_axis] = s
-                data = arr[tuple(idx)]
-                weights = self.window.weights(self.geometry, s.stop - s.start)
-                yield TemporalPatch(
-                    data=data, anchor=int(anchor), indices=s, weights=weights
-                )
+            yield from self._patches_for_anchor(arr, time_len, int(anchor), time_axis)
+
+    def patches_at(
+        self, series: Any, anchor: int, time_axis: int = 0
+    ) -> list[TemporalPatch]:
+        """Return the patches `split` would yield for a single anchor.
+
+        Always a list — length 1 for the common single-slice
+        geometries, length N for `TemporalMultiScale` and any future
+        geometry that returns ``list[slice]`` (one entry per scale).
+        The spatial counterpart returns a single `Patch`; the temporal
+        side has to flatten the multi-scale case, so the return type
+        is a list either way for callers to handle uniformly.
+
+        Args:
+            series: Same input shape as `split`.
+            anchor: A single anchor value (typically from
+                ``patcher.anchors(series)[index]``).
+            time_axis: Which axis is the time axis. Default 0.
+        """
+        arr = np.asarray(series)
+        time_len = int(arr.shape[time_axis])
+        return list(self._patches_for_anchor(arr, time_len, int(anchor), time_axis))
+
+    def anchors(self, series: Any, time_axis: int = 0) -> list[int]:
+        """Materialise the sampler's anchor sequence for ``series``.
+
+        Returns ``len(anchors) <= len(split(series))`` — multi-scale
+        geometries emit multiple patches per anchor. Same determinism
+        contract as `n_anchors`. See `SpatialPatcher.anchors`.
+        """
+        shape = getattr(series, "shape", None) or np.shape(series)
+        time_len = int(shape[time_axis])
+        return [int(a) for a in self.sampler.anchors(time_len)]
+
+    def _patches_for_anchor(
+        self, arr: np.ndarray, time_len: int, anchor: int, time_axis: int
+    ) -> Iterator[TemporalPatch]:
+        window = self.geometry.window(time_len, anchor)
+        slices = window if isinstance(window, list) else [window]
+        for s in slices:
+            idx = [slice(None)] * arr.ndim
+            idx[time_axis] = s
+            data = arr[tuple(idx)]
+            weights = self.window.weights(self.geometry, s.stop - s.start)
+            yield TemporalPatch(data=data, anchor=anchor, indices=s, weights=weights)
 
     def n_anchors(self, series: Any, time_axis: int = 0) -> int:
         """Number of patches `split(series)` will yield.
