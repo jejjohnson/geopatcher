@@ -48,8 +48,10 @@ def stack_patches(
     patches_list = list(patches)
     if not patches_list:
         raise ValueError(
-            "stack_patches: empty input. Call patcher.split / "
-            "patcher.patches_at first, or check the field has data."
+            "stack_patches: empty input. Materialise patches first via "
+            "list(patcher.split(field)), patcher.patch_at(field, anchor) "
+            "(spatial), or patcher.patches_at(series, anchor) (temporal), "
+            "and check the field actually has data."
         )
 
     arrays: list[np.ndarray] = []
