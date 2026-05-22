@@ -179,6 +179,8 @@ class SpatialPatcher:
                 if patch is not None:
                     release = _acquire_backpressure(patch, slots, byte_budget)
                     if release is not None:
+                        # Attach ownership in-place so the yielded patch
+                        # releases the exact slot acquired for this read.
                         patch._release = release
                     yield patch
             return
@@ -243,7 +245,11 @@ class SpatialPatcher:
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
-        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        slots = (
+            AsyncBoundedSemaphore(value=max_in_flight)
+            if max_in_flight is not None
+            else None
+        )
         byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
@@ -252,7 +258,7 @@ class SpatialPatcher:
                 patch = await _build_patch_async(
                     field, domain, anchor, self.geometry, base_weights, boundary
                 )
-                release = _acquire_backpressure(patch, slots, byte_budget)
+                release = await _acquire_backpressure_async(patch, slots, byte_budget)
                 if release is not None:
                     patch._release = release
                 yield patch
@@ -272,7 +278,7 @@ class SpatialPatcher:
                 except Exception as exc:
                     _dispatch(hook_list, "on_error", anchor, exc)
                     raise
-                release = _acquire_backpressure(patch, slots, byte_budget)
+                release = await _acquire_backpressure_async(patch, slots, byte_budget)
                 if release is not None:
                     patch._release = release
                 _dispatch(
@@ -501,6 +507,8 @@ class AsyncSpatialPatcher:
                         patch, slots, byte_budget
                     )
                     if release is not None:
+                        # Attach ownership in-place so the yielded patch
+                        # releases the exact slot acquired for this read.
                         patch._release = release
                     yield patch
             return

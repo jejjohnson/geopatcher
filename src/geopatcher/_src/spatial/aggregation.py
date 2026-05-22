@@ -454,6 +454,7 @@ def _write_cog(
         "compress": options.pop("compress", "DEFLATE"),
         "blockxsize": blocksize,
         "blockysize": blocksize,
+        # GDAL creation option casing.
         "BIGTIFF": options.pop("bigtiff", "IF_SAFER"),
     }
     profile.update(options)
@@ -694,7 +695,7 @@ class _SketchAggregation(SpatialAggregation):
 
     def merge(self, patches: Iterable[Any], domain: Any = None) -> Any:
         del domain
-        if isinstance(patches, type(self)):
+        if isinstance(patches, self.__class__):
             self.merge_state(patches)
             return self
         for patch in patches:

@@ -13,10 +13,11 @@ from typing import Any
 class PatchJournal:
     """Append-only local journal keyed by patch anchor.
 
-    The journal stores one JSON record per committed patch. Re-opening the
-    same path reconstructs the latest status for each anchor, allowing
-    ``patcher.split(..., journal=journal)`` to skip completed work after a
-    crash.
+    Anchors are expected to be JSON-serializable tuples, lists, dictionaries,
+    strings, numbers, or booleans. The journal stores one JSON record per
+    committed patch. Re-opening the same path reconstructs the latest status
+    for each anchor, allowing ``patcher.split(..., journal=journal)`` to skip
+    completed work after a crash.
     """
 
     uri: str

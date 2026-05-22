@@ -98,3 +98,14 @@ def test_sketch_aggregations_finalize_streaming_summaries() -> None:
     assert 2 in mode
     assert histogram["counts"].sum() == 7
     assert len(reservoir) == 4
+
+
+def test_hyperloglog_sketches_merge_disjoint_sets() -> None:
+    left = SpatialApproxCardinality(p=8)
+    right = SpatialApproxCardinality(p=8)
+    left.update(_patch(np.arange(50)))
+    right.update(_patch(np.arange(50, 100)))
+
+    left.merge(right)
+
+    assert left.finalize() == pytest.approx(100, rel=0.2)
