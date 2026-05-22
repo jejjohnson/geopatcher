@@ -43,6 +43,7 @@ class RecordingHook:
     def __init__(self) -> None:
         self.events: list[tuple[str, object]] = []
         self.bytes_: list[int] = []
+        self.runtimes: list[float] = []
 
     def on_split_start(self, n_anchors: int) -> None:
         self.events.append(("split_start", n_anchors))
@@ -51,9 +52,9 @@ class RecordingHook:
         self.events.append(("patch_start", anchor))
 
     def on_patch_done(self, anchor: object, runtime_s: float, bytes_: int) -> None:
-        assert runtime_s >= 0
         self.events.append(("patch_done", anchor))
         self.bytes_.append(bytes_)
+        self.runtimes.append(runtime_s)
 
     def on_split_end(self) -> None:
         self.events.append(("split_end", None))
@@ -71,6 +72,7 @@ def test_spatial_split_dispatches_hooks_in_order(
     assert hook.events[-1] == ("split_end", None)
     assert [name for name, _ in hook.events].count("patch_start") == 16
     assert [name for name, _ in hook.events].count("patch_done") == 16
+    assert all(runtime_s >= 0 for runtime_s in hook.runtimes)
     assert all(bytes_ > 0 for bytes_ in hook.bytes_)
 
 

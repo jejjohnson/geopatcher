@@ -35,7 +35,7 @@ class PatcherHook(Protocol):
 
 
 def _as_hooks(hooks: Iterable[PatcherHook] | None) -> tuple[PatcherHook, ...]:
-    """Materialise hooks once so one-shot iterables work across callbacks."""
+    """Materialize hooks once so one-shot iterables work across callbacks."""
     return () if hooks is None else tuple(hooks)
 
 
