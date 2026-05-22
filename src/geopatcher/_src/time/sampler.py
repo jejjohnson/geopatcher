@@ -101,7 +101,8 @@ class TemporalRandom(TemporalSampler):
 
     Args:
         n: Number of anchors to draw.
-        seed: Optional integer seed for reproducible draws.
+        seed: Integer seed for reproducible draws — same contract as
+            `SpatialRandom.seed`. ``None`` re-seeds each call.
     """
 
     n: int = 1
