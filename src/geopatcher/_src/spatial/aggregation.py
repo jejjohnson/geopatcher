@@ -130,6 +130,7 @@ class SpatialMax(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
+            # fmax ignores NaN to support masked patches.
             acc[sl] = np.fmax(acc[sl], np.asarray(p.data, dtype=np.float64))
         return acc
 
@@ -147,6 +148,7 @@ class SpatialMin(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
+            # fmin ignores NaN to support masked patches.
             acc[sl] = np.fmin(acc[sl], np.asarray(p.data, dtype=np.float64))
         return acc
 

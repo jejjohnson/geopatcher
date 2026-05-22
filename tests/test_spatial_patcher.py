@@ -123,6 +123,7 @@ class TestSplit:
             aggregation=SpatialOverlapAdd(),
             on_error="retry",
             max_retries=2,
+            # `retry_on` accepts class names from config as well as classes.
             retry_on=("OSError",),
         )
 
