@@ -15,6 +15,7 @@ from __future__ import annotations
 import traceback
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
+from threading import BoundedSemaphore, Condition
 from time import perf_counter
 from typing import Any, Literal
 
@@ -122,19 +123,42 @@ class SpatialPatcher:
         hooks: Iterable[PatcherHook] | None = None,
         *,
         prefetch: int = 0,
+        journal: Any | None = None,
+        max_in_flight: int | None = None,
+        max_in_flight_bytes: int | None = None,
     ) -> Iterator[Patch]:
         """Yield patches lazily — one per anchor placed by the sampler."""
-        return prefetch_iterable(self._split(field, hooks=hooks), prefetch)
+        _validate_backpressure(max_in_flight, max_in_flight_bytes)
+        return prefetch_iterable(
+            self._split(
+                field,
+                hooks=hooks,
+                journal=journal,
+                max_in_flight=max_in_flight,
+                max_in_flight_bytes=max_in_flight_bytes,
+            ),
+            prefetch,
+        )
 
     def _split(
-        self, field: Field, *, hooks: Iterable[PatcherHook] | None = None
+        self,
+        field: Field,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+        journal: Any | None = None,
+        max_in_flight: int | None = None,
+        max_in_flight_bytes: int | None = None,
     ) -> Iterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
+        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
+                if journal is not None and journal.has(anchor):
+                    continue
                 patch = _build_patch_with_policy(
                     field=field,
                     domain=domain,
@@ -149,12 +173,17 @@ class SpatialPatcher:
                     capture_traceback=self.capture_traceback,
                 )
                 if patch is not None:
+                    release = _acquire_backpressure(patch, slots, byte_budget)
+                    if release is not None:
+                        patch._release = release
                     yield patch
             return
         anchors = list(self.sampler.anchors(domain, self.geometry))
         _dispatch(hook_list, "on_split_start", len(anchors))
         try:
             for anchor in anchors:
+                if journal is not None and journal.has(anchor):
+                    continue
                 _dispatch(hook_list, "on_patch_start", anchor)
                 start = perf_counter()
                 errors_before = len(self.errors)
@@ -181,6 +210,9 @@ class SpatialPatcher:
                     )
                 if patch is None:
                     continue
+                release = _acquire_backpressure(patch, slots, byte_budget)
+                if release is not None:
+                    patch._release = release
                 _dispatch(
                     hook_list,
                     "on_patch_done",
@@ -197,22 +229,36 @@ class SpatialPatcher:
         field: AsyncField,
         *,
         hooks: Iterable[PatcherHook] | None = None,
+        journal: Any | None = None,
+        max_in_flight: int | None = None,
+        max_in_flight_bytes: int | None = None,
     ) -> AsyncIterator[Patch]:
         """Async mirror of `split` over an `AsyncField`."""
+        _validate_backpressure(max_in_flight, max_in_flight_bytes)
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
+        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
-                yield await _build_patch_async(
+                if journal is not None and journal.has(anchor):
+                    continue
+                patch = await _build_patch_async(
                     field, domain, anchor, self.geometry, base_weights, boundary
                 )
+                release = _acquire_backpressure(patch, slots, byte_budget)
+                if release is not None:
+                    patch._release = release
+                yield patch
             return
         anchors = list(self.sampler.anchors(domain, self.geometry))
         _dispatch(hook_list, "on_split_start", len(anchors))
         try:
             for anchor in anchors:
+                if journal is not None and journal.has(anchor):
+                    continue
                 _dispatch(hook_list, "on_patch_start", anchor)
                 start = perf_counter()
                 try:
@@ -222,6 +268,9 @@ class SpatialPatcher:
                 except Exception as exc:
                     _dispatch(hook_list, "on_error", anchor, exc)
                     raise
+                release = _acquire_backpressure(patch, slots, byte_budget)
+                if release is not None:
+                    patch._release = release
                 _dispatch(
                     hook_list,
                     "on_patch_done",
@@ -388,10 +437,22 @@ class AsyncSpatialPatcher:
         _validate_error_policy(self.on_error, self.max_retries)
 
     async def split(
-        self, field: AsyncField, hooks: Iterable[PatcherHook] | None = None
+        self,
+        field: AsyncField,
+        hooks: Iterable[PatcherHook] | None = None,
+        *,
+        journal: Any | None = None,
+        max_in_flight: int | None = None,
+        max_in_flight_bytes: int | None = None,
     ) -> AsyncIterator[Patch]:
         """Backward-compatible alias for `asplit`."""
-        async for patch in self.asplit(field, hooks=hooks):
+        async for patch in self.asplit(
+            field,
+            hooks=hooks,
+            journal=journal,
+            max_in_flight=max_in_flight,
+            max_in_flight_bytes=max_in_flight_bytes,
+        ):
             yield patch
 
     async def asplit(
@@ -399,13 +460,21 @@ class AsyncSpatialPatcher:
         field: AsyncField,
         *,
         hooks: Iterable[PatcherHook] | None = None,
+        journal: Any | None = None,
+        max_in_flight: int | None = None,
+        max_in_flight_bytes: int | None = None,
     ) -> AsyncIterator[Patch]:
+        _validate_backpressure(max_in_flight, max_in_flight_bytes)
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
+        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
+                if journal is not None and journal.has(anchor):
+                    continue
                 patch = await _build_patch_async_with_policy(
                     field=field,
                     domain=domain,
@@ -420,12 +489,17 @@ class AsyncSpatialPatcher:
                     capture_traceback=self.capture_traceback,
                 )
                 if patch is not None:
+                    release = _acquire_backpressure(patch, slots, byte_budget)
+                    if release is not None:
+                        patch._release = release
                     yield patch
             return
         anchors = list(self.sampler.anchors(domain, self.geometry))
         _dispatch(hook_list, "on_split_start", len(anchors))
         try:
             for anchor in anchors:
+                if journal is not None and journal.has(anchor):
+                    continue
                 _dispatch(hook_list, "on_patch_start", anchor)
                 start = perf_counter()
                 errors_before = len(self.errors)
@@ -452,6 +526,9 @@ class AsyncSpatialPatcher:
                     )
                 if patch is None:
                     continue
+                release = _acquire_backpressure(patch, slots, byte_budget)
+                if release is not None:
+                    patch._release = release
                 _dispatch(
                     hook_list,
                     "on_patch_done",
@@ -668,6 +745,59 @@ def _matches_retry_on(
         elif isinstance(exc, candidate):
             return True
     return False
+
+
+def _validate_backpressure(
+    max_in_flight: int | None, max_in_flight_bytes: int | None
+) -> None:
+    if max_in_flight is not None and max_in_flight < 1:
+        raise ValueError("max_in_flight must be >= 1")
+    if max_in_flight_bytes is not None and max_in_flight_bytes < 1:
+        raise ValueError("max_in_flight_bytes must be >= 1")
+
+
+class _ByteBudget:
+    def __init__(self, limit: int | None) -> None:
+        self.limit = limit
+        self.used = 0
+        self._condition = Condition()
+
+    def acquire(self, patch: Patch) -> int:
+        nbytes = int(getattr(np.asarray(patch.data), "nbytes", 0))
+        if self.limit is not None and nbytes > self.limit:
+            raise ValueError(
+                f"patch uses {nbytes} bytes, exceeding max_in_flight_bytes={self.limit}"
+            )
+        if self.limit is None:
+            self.used += nbytes
+            return nbytes
+        with self._condition:
+            while self.used + nbytes > self.limit:
+                self._condition.wait()
+            self.used += nbytes
+        return nbytes
+
+    def release(self, nbytes: int) -> None:
+        with self._condition:
+            self.used = max(0, self.used - nbytes)
+            self._condition.notify()
+
+
+def _acquire_backpressure(
+    patch: Patch, slots: BoundedSemaphore | None, byte_budget: _ByteBudget
+) -> Any | None:
+    nbytes = byte_budget.acquire(patch)
+    if slots is not None:
+        slots.acquire()
+    if slots is None and nbytes == 0:
+        return None
+
+    def release() -> None:
+        if slots is not None:
+            slots.release()
+        byte_budget.release(nbytes)
+
+    return release
 
 
 def _build_patch(

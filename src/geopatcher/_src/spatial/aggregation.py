@@ -17,9 +17,11 @@ mathematical framing.
 
 from __future__ import annotations
 
+import hashlib
+import math
 import warnings
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import numpy as np
@@ -270,11 +272,17 @@ class SpatialOverlapAdd(SpatialAggregation):
     streaming: bool = False
     target_path: str | None = None
     chunks: tuple[int, ...] | None = None
+    shard_shape: tuple[int, ...] | None = None
+    writer: str = "zarr"
+    cog: dict[str, Any] | None = None
     normalize_by_window: bool = True
 
     streaming_safe: ClassVar[bool] = True
 
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
+        if self.streaming and self.target_path and self.writer == "cog":
+            result = self._merge_in_memory(patches, domain)
+            return _write_cog(result, domain, self.target_path, self.cog)
         if self.streaming and self.target_path:
             return self._merge_streaming(patches, domain)
         return self._merge_in_memory(patches, domain)
@@ -304,8 +312,6 @@ class SpatialOverlapAdd(SpatialAggregation):
     def _merge_streaming(self, patches: Iterable[Any], domain: Any) -> Any:
         import itertools
 
-        import zarr
-
         shape = _domain_array_shape(domain)
         # Peek the first patch so the default chunk shape matches its data
         # shape, rather than degenerating to the whole-array chunk that
@@ -315,13 +321,13 @@ class SpatialOverlapAdd(SpatialAggregation):
             first = next(patches_iter)
         except StopIteration:
             # No patches → return an empty zero-filled zarr array.
-            return zarr.open(
+            return _open_zarr_array(
                 f"{self.target_path}/rec.zarr",
-                mode="w",
                 shape=shape,
                 chunks=shape,
                 dtype="float32",
                 fill_value=0.0,
+                shard_shape=self.shard_shape,
             )
         first_data = np.asarray(first.data)
         # Right-align the data shape against the domain shape so leading
@@ -332,21 +338,21 @@ class SpatialOverlapAdd(SpatialAggregation):
             chunks = tuple(shape[: -len(first_data.shape)]) + tuple(first_data.shape)
         # `zarr.open` returns `Array | Group`; with mode="w" and a `shape`/`dtype`
         # it always returns an Array — but ty can't narrow that, so we cast.
-        rec: Any = zarr.open(
+        rec = _open_zarr_array(
             f"{self.target_path}/rec.zarr",
-            mode="w",
             shape=shape,
             chunks=chunks,
             dtype="float32",
             fill_value=0.0,
+            shard_shape=self.shard_shape,
         )
-        wsum: Any = zarr.open(
+        wsum = _open_zarr_array(
             f"{self.target_path}/wsum.zarr",
-            mode="w",
             shape=shape,
             chunks=chunks,
             dtype="float32",
             fill_value=0.0,
+            shard_shape=self.shard_shape,
         )
         # Push the peeked patch back to the front of the iterator.
         patches = itertools.chain([first], patches_iter)
@@ -375,8 +381,80 @@ class SpatialOverlapAdd(SpatialAggregation):
             "streaming": self.streaming,
             "target_path": self.target_path,
             "chunks": list(self.chunks) if self.chunks else None,
+            "shard_shape": list(self.shard_shape) if self.shard_shape else None,
+            "writer": self.writer,
+            "cog": self.cog,
             "normalize_by_window": self.normalize_by_window,
         }
+
+
+def _open_zarr_array(
+    path: str,
+    *,
+    shape: tuple[int, ...],
+    chunks: tuple[int, ...],
+    dtype: str,
+    fill_value: float,
+    shard_shape: tuple[int, ...] | None,
+) -> Any:
+    import zarr
+
+    kwargs: dict[str, Any] = {
+        "mode": "w",
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "fill_value": fill_value,
+    }
+    if shard_shape is not None:
+        kwargs["shards"] = shard_shape
+    try:
+        return zarr.open(path, **kwargs)
+    except TypeError:
+        if shard_shape is None:
+            raise
+        warnings.warn(
+            "installed zarr does not accept `shards`; writing unsharded output",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        kwargs.pop("shards")
+        return zarr.open(path, **kwargs)
+
+
+def _write_cog(
+    array: np.ndarray, domain: Any, target_path: str, cog: dict[str, Any] | None
+) -> str:
+    import rasterio
+
+    data = np.asarray(array, dtype=np.float32)
+    if data.ndim == 2:
+        write_data = data[np.newaxis, ...]
+    elif data.ndim == 3:
+        write_data = data
+    else:
+        raise ValueError("COG writer expects a 2-D array or a 3-D band-first array")
+
+    options = dict(cog or {})
+    blocksize = options.pop("blocksize", 512)
+    profile: dict[str, Any] = {
+        "driver": "GTiff",
+        "height": write_data.shape[-2],
+        "width": write_data.shape[-1],
+        "count": write_data.shape[0],
+        "dtype": "float32",
+        "crs": getattr(domain, "crs", None),
+        "transform": getattr(domain, "transform", rasterio.Affine.identity()),
+        "tiled": True,
+        "compress": options.pop("compress", "DEFLATE"),
+        "blockxsize": blocksize,
+        "blockysize": blocksize,
+        "BIGTIFF": options.pop("bigtiff", "IF_SAFER"),
+    }
+    profile.update(options)
+    with rasterio.open(target_path, "w", **profile) as dst:
+        dst.write(write_data)
+    return target_path
 
 
 @dataclass(eq=False)
@@ -600,67 +678,260 @@ class SpatialLearned(SpatialAggregation):
 
 
 # ---------------------------------------------------------------------------
-# Approximate streaming (stubs — full implementations in v0.2)
+# Approximate streaming sketches
 # ---------------------------------------------------------------------------
 
 
-class _ApproxStub(SpatialAggregation):
-    """Shared NotImplementedError for the sketch family."""
+class _SketchAggregation(SpatialAggregation):
+    """Shared ``merge(patches, domain)`` loop for global sketch reducers."""
 
     streaming_safe: ClassVar[bool] = True
 
-    _substitute: ClassVar[str] = ""
+    def merge(self, patches: Iterable[Any], domain: Any = None) -> Any:
+        del domain
+        if isinstance(patches, type(self)):
+            self.merge_state(patches)
+            return self
+        for patch in patches:
+            self.update(patch)
+        return self.finalize()
 
-    def merge(self, patches: Iterable[Any], domain: Any) -> Any:
-        raise NotImplementedError(
-            f"{type(self).__name__} is reserved for v0.2 (needs the "
-            f"{self._substitute} backend). Use the documented substitute or "
-            "implement a `SpatialCustom`-style wrapper in the meantime."
-        )
+    def update(self, patch: Any) -> None:
+        self.update_many(_patch_values(patch))
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        raise NotImplementedError
+
+    def finalize(self) -> Any:
+        raise NotImplementedError
+
+    def _values(self) -> Iterable[Any]:
+        raise NotImplementedError
+
+    def merge_state(self, other: Any) -> None:
+        self.update_many(other._values())
+
+
+def _patch_values(patch: Any) -> np.ndarray:
+    values = np.asarray(patch.data).reshape(-1)
+    return (
+        values[np.isfinite(values)]
+        if np.issubdtype(values.dtype, np.number)
+        else values
+    )
 
 
 @dataclass(eq=False)
-class SpatialApproxQuantile(_ApproxStub):
-    """Streaming quantile via t-digest / KLL (placeholder).
+class SpatialApproxQuantile(_SketchAggregation):
+    """Global approximate quantile via bounded reservoir sampling."""
 
-    Use `SpatialMedian` (non-streaming) or supply a custom `SpatialAggregation` until
-    v0.2 lands the t-digest backend.
-    """
+    q: float | list[float] = 0.5
+    compression: int = 200
+    seed: int | None = 0
+    _sample: list[float] = field(default_factory=list, init=False, repr=False)
+    _seen: int = field(default=0, init=False, repr=False)
+    _rng: np.random.Generator = field(init=False, repr=False)
 
-    q: float = 0.5
-    _substitute: ClassVar[str] = "t-digest (e.g. `tdigest`)"
+    def __post_init__(self) -> None:
+        if self.compression < 1:
+            raise ValueError("compression must be >= 1")
+        self._rng = np.random.default_rng(self.seed)
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        for value in values:
+            x = float(value)
+            self._seen += 1
+            if len(self._sample) < self.compression:
+                self._sample.append(x)
+                continue
+            j = int(self._rng.integers(0, self._seen))
+            if j < self.compression:
+                self._sample[j] = x
+
+    def finalize(self) -> dict[str, float]:
+        if not self._sample:
+            return {}
+        qs = [self.q] if isinstance(self.q, float) else list(self.q)
+        values = np.asarray(self._sample, dtype=np.float64)
+        return {str(q): float(np.quantile(values, float(q))) for q in qs}
+
+    def _values(self) -> Iterable[Any]:
+        return self._sample
+
+    def get_config(self) -> dict[str, Any]:
+        return {"q": self.q, "compression": self.compression, "seed": self.seed}
 
 
 @dataclass(eq=False)
-class SpatialApproxCardinality(_ApproxStub):
-    """Streaming unique-value count via HyperLogLog (placeholder)."""
+class SpatialApproxCardinality(_SketchAggregation):
+    """Global approximate unique-value count via HyperLogLog."""
 
     p: int = 14
-    _substitute: ClassVar[str] = "HyperLogLog (e.g. `datasketch.HyperLogLog`)"
+    _registers: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not 4 <= self.p <= 16:
+            raise ValueError("p must be between 4 and 16")
+        self._registers = np.zeros(1 << self.p, dtype=np.uint8)
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        for value in values:
+            h = _hash64(value)
+            idx = h & ((1 << self.p) - 1)
+            w = h >> self.p
+            rank = (64 - self.p) - w.bit_length() + 1 if w else 64 - self.p + 1
+            self._registers[idx] = max(int(self._registers[idx]), rank)
+
+    def finalize(self) -> float:
+        m = float(1 << self.p)
+        alpha = 0.7213 / (1.0 + 1.079 / m)
+        estimate = alpha * m * m / np.sum(2.0 ** (-self._registers.astype(float)))
+        zeros = int(np.count_nonzero(self._registers == 0))
+        if estimate <= 2.5 * m and zeros > 0:
+            estimate = m * math.log(m / zeros)
+        return float(estimate)
+
+    def _values(self) -> Iterable[Any]:
+        return []
+
+    def merge_state(self, other: SpatialApproxCardinality) -> None:
+        self._registers = np.maximum(self._registers, other._registers)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"p": self.p}
 
 
 @dataclass(eq=False)
-class SpatialApproxMode(_ApproxStub):
-    """Streaming mode via Misra-Gries / Space-Saving (placeholder)."""
+class SpatialApproxMode(_SketchAggregation):
+    """Global approximate heavy hitters via Misra-Gries counters."""
 
     k: int = 16
-    _substitute: ClassVar[str] = "Misra-Gries / Space-Saving"
+    _counts: dict[Any, int] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.k < 1:
+            raise ValueError("k must be >= 1")
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        for value in values:
+            key = _python_scalar(value)
+            if key in self._counts:
+                self._counts[key] += 1
+            elif len(self._counts) < self.k:
+                self._counts[key] = 1
+            else:
+                for item in list(self._counts):
+                    self._counts[item] -= 1
+                    if self._counts[item] == 0:
+                        del self._counts[item]
+
+    def finalize(self) -> dict[Any, int]:
+        return dict(
+            sorted(self._counts.items(), key=lambda item: item[1], reverse=True)
+        )
+
+    def _values(self) -> Iterable[Any]:
+        return self._counts.keys()
+
+    def get_config(self) -> dict[str, Any]:
+        return {"k": self.k}
 
 
 @dataclass(eq=False)
-class SpatialStreamingHistogram(_ApproxStub):
-    """Streaming binned histogram (placeholder)."""
+class SpatialStreamingHistogram(_SketchAggregation):
+    """Global online histogram with at most ``bins`` centroids."""
 
     bins: int = 64
-    _substitute: ClassVar[str] = "equi-width or t-digest-backed histogram"
+    _centers: list[float] = field(default_factory=list, init=False, repr=False)
+    _counts: list[int] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.bins < 1:
+            raise ValueError("bins must be >= 1")
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        for value in values:
+            self._centers.append(float(value))
+            self._counts.append(1)
+            while len(self._centers) > self.bins:
+                self._merge_closest_bins()
+
+    def finalize(self) -> dict[str, np.ndarray]:
+        order = np.argsort(self._centers)
+        return {
+            "centers": np.asarray(self._centers, dtype=np.float64)[order],
+            "counts": np.asarray(self._counts, dtype=np.int64)[order],
+        }
+
+    def _values(self) -> Iterable[Any]:
+        for center, count in zip(self._centers, self._counts, strict=True):
+            yield from [center] * count
+
+    def _merge_closest_bins(self) -> None:
+        order = list(np.argsort(self._centers))
+        centers = [self._centers[i] for i in order]
+        counts = [self._counts[i] for i in order]
+        idx = min(
+            range(len(centers) - 1),
+            key=lambda i: abs(centers[i + 1] - centers[i]),
+        )
+        count = counts[idx] + counts[idx + 1]
+        center = (
+            centers[idx] * counts[idx] + centers[idx + 1] * counts[idx + 1]
+        ) / count
+        centers[idx : idx + 2] = [center]
+        counts[idx : idx + 2] = [count]
+        self._centers = centers
+        self._counts = counts
+
+    def get_config(self) -> dict[str, Any]:
+        return {"bins": self.bins}
 
 
 @dataclass(eq=False)
-class SpatialReservoir(_ApproxStub):
-    """SpatialReservoir sampling of size ``k`` (placeholder)."""
+class SpatialReservoir(_SketchAggregation):
+    """Uniform global reservoir sample using Vitter's Algorithm R."""
 
     k: int = 100
-    _substitute: ClassVar[str] = "reservoir sampling (Algorithm R / L)"
+    seed: int | None = 0
+    _sample: list[Any] = field(default_factory=list, init=False, repr=False)
+    _seen: int = field(default=0, init=False, repr=False)
+    _rng: np.random.Generator = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.k < 1:
+            raise ValueError("k must be >= 1")
+        self._rng = np.random.default_rng(self.seed)
+
+    def update_many(self, values: Iterable[Any]) -> None:
+        for value in values:
+            self._seen += 1
+            item = _python_scalar(value)
+            if len(self._sample) < self.k:
+                self._sample.append(item)
+                continue
+            j = int(self._rng.integers(0, self._seen))
+            if j < self.k:
+                self._sample[j] = item
+
+    def finalize(self) -> np.ndarray:
+        return np.asarray(self._sample)
+
+    def _values(self) -> Iterable[Any]:
+        return self._sample
+
+    def get_config(self) -> dict[str, Any]:
+        return {"k": self.k, "seed": self.seed}
+
+
+def _hash64(value: Any) -> int:
+    key = repr(_python_scalar(value)).encode()
+    digest = hashlib.blake2b(key, digest_size=8).digest()
+    return int.from_bytes(digest, "big")
+
+
+def _python_scalar(value: Any) -> Any:
+    return value.item() if hasattr(value, "item") else value
 
 
 # ---------------------------------------------------------------------------
