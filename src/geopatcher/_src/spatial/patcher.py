@@ -65,18 +65,50 @@ class SpatialPatcher:
     def split(self, field: Field) -> Iterator[Patch]:
         """Yield patches lazily — one per anchor placed by the sampler."""
         domain = field.domain
-        try:
-            base_weights = self.window.weights(self.geometry)
-        except TypeError:
-            base_weights = None
+        base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
-            indices = self.geometry.neighborhood(domain, anchor)
-            if boundary == "raise":
-                _raise_if_overflows(indices, domain)
-            data = field.select(_unwrap_for_select(indices))
-            weights = _build_weights(indices, base_weights, boundary=boundary)
-            yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+            yield _build_patch(
+                field, domain, anchor, self.geometry, base_weights, boundary
+            )
+
+    def patch_at(self, field: Field, anchor: Any) -> Patch:
+        """Read a single `Patch` at a specific anchor.
+
+        The same geometry → ``field.select`` → window-weights pipeline
+        as `split`, but driven by one explicit anchor instead of
+        walking the sampler. Designed for random-access ML datasets
+        (torch `Dataset.__getitem__`, Grain `RandomAccessDataSource`)
+        that need lazy single-patch reads without materialising the
+        whole iterator first.
+
+        Args:
+            field: The `Field` to read from.
+            anchor: An anchor in the same format the sampler emits
+                (e.g. ``(row, col)`` for raster, ``dict`` for grid).
+                Typically obtained from
+                ``patcher.anchors(field)[index]``.
+
+        Returns:
+            A single `Patch` bit-identical to the one ``split`` would
+            yield for the same anchor.
+        """
+        domain = field.domain
+        base_weights = _safe_base_weights(self.window, self.geometry)
+        boundary = getattr(self.geometry, "boundary", "drop")
+        return _build_patch(
+            field, domain, anchor, self.geometry, base_weights, boundary
+        )
+
+    def anchors(self, field: Field) -> list[Any]:
+        """Materialise the sampler's anchor sequence for ``field``.
+
+        Returns the same sequence ``split(field)`` walks, as a list
+        the caller can ``len()`` and index. Same determinism contract
+        as `n_anchors` (deterministic given an int sampler seed,
+        re-drawn when seed is ``None``).
+        """
+        return list(self.sampler.anchors(field.domain, self.geometry))
 
     def n_anchors(self, field: Field) -> int:
         """Number of patches `split(field)` will yield.
@@ -138,18 +170,35 @@ class AsyncSpatialPatcher:
 
     async def split(self, field: AsyncField) -> AsyncIterator[Patch]:
         domain = field.domain
-        try:
-            base_weights = self.window.weights(self.geometry)
-        except TypeError:
-            base_weights = None
+        base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         for anchor in self.sampler.anchors(domain, self.geometry):
-            indices = self.geometry.neighborhood(domain, anchor)
-            if boundary == "raise":
-                _raise_if_overflows(indices, domain)
-            data = await field.select(_unwrap_for_select(indices))
-            weights = _build_weights(indices, base_weights, boundary=boundary)
-            yield Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+            yield await _build_patch_async(
+                field, domain, anchor, self.geometry, base_weights, boundary
+            )
+
+    async def patch_at(self, field: AsyncField, anchor: Any) -> Patch:
+        """Read a single `Patch` at a specific anchor.
+
+        Async mirror of `SpatialPatcher.patch_at` — the read goes
+        through ``await field.select(...)``. Designed for random-access
+        cloud-tile readers driving a Grain / torch `Dataset` with
+        per-item HTTP fan-out.
+        """
+        domain = field.domain
+        base_weights = _safe_base_weights(self.window, self.geometry)
+        boundary = getattr(self.geometry, "boundary", "drop")
+        return await _build_patch_async(
+            field, domain, anchor, self.geometry, base_weights, boundary
+        )
+
+    def anchors(self, field: AsyncField) -> list[Any]:
+        """Materialise the sampler's anchor sequence for ``field``.
+
+        Anchors are placed without touching the field, so this is sync
+        even on the async patcher. See `SpatialPatcher.anchors`.
+        """
+        return list(self.sampler.anchors(field.domain, self.geometry))
 
     def n_anchors(self, field: AsyncField) -> int:
         """Number of patches `split(field)` will yield.
@@ -161,6 +210,52 @@ class AsyncSpatialPatcher:
     def merge(self, patches: Iterable[Any], domain: Any) -> Any:
         _warn_if_unsafe_streaming(self.aggregation)
         return self.aggregation.merge(patches, domain)
+
+
+def _safe_base_weights(
+    window: SpatialWindow, geometry: SpatialGeometry
+) -> np.ndarray | None:
+    """Compute the geometry-shaped base weights, or `None` for windows
+    that don't expose a static weight grid (e.g. graph-based geometries
+    where weights are anchor-dependent)."""
+    try:
+        return window.weights(geometry)
+    except TypeError:
+        return None
+
+
+def _build_patch(
+    field: Field,
+    domain: Any,
+    anchor: Any,
+    geometry: SpatialGeometry,
+    base_weights: np.ndarray | None,
+    boundary: str,
+) -> Patch:
+    """Single-anchor read pipeline shared by `split` and `patch_at`."""
+    indices = geometry.neighborhood(domain, anchor)
+    if boundary == "raise":
+        _raise_if_overflows(indices, domain)
+    data = field.select(_unwrap_for_select(indices))
+    weights = _build_weights(indices, base_weights, boundary=boundary)
+    return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
+
+
+async def _build_patch_async(
+    field: AsyncField,
+    domain: Any,
+    anchor: Any,
+    geometry: SpatialGeometry,
+    base_weights: np.ndarray | None,
+    boundary: str,
+) -> Patch:
+    """Async mirror of `_build_patch` — awaits `field.select`."""
+    indices = geometry.neighborhood(domain, anchor)
+    if boundary == "raise":
+        _raise_if_overflows(indices, domain)
+    data = await field.select(_unwrap_for_select(indices))
+    weights = _build_weights(indices, base_weights, boundary=boundary)
+    return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
 
 def _unwrap_for_select(indices: Any) -> Any:
