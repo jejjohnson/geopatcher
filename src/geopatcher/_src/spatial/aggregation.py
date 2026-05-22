@@ -63,7 +63,7 @@ def _domain_array_shape(domain: Any) -> tuple[int, ...]:
     raise TypeError(f"can't infer dense shape from {type(domain).__name__}")
 
 
-def _nan_to_zero(array: np.ndarray) -> np.ndarray:
+def _replace_nan_with_zero(array: np.ndarray) -> np.ndarray:
     return np.nan_to_num(array, nan=0.0, posinf=np.inf, neginf=-np.inf)
 
 
@@ -113,7 +113,7 @@ class SpatialSum(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
-            acc[sl] += _nan_to_zero(np.asarray(p.data, dtype=np.float64))
+            acc[sl] += _replace_nan_with_zero(np.asarray(p.data, dtype=np.float64))
         return acc
 
 
@@ -176,9 +176,11 @@ class SpatialWeightedSum(SpatialAggregation):
             w = self.weight_fn(p) if self.weight_fn else p.weights
             data = np.asarray(p.data, dtype=np.float64)
             if w is None:
-                acc[sl] += _nan_to_zero(data)
+                acc[sl] += _replace_nan_with_zero(data)
             else:
-                acc[sl] += _nan_to_zero(data * np.asarray(w, dtype=np.float64))
+                acc[sl] += _replace_nan_with_zero(
+                    data * np.asarray(w, dtype=np.float64)
+                )
         return acc
 
 
@@ -230,7 +232,7 @@ class SpatialVariance(SpatialAggregation):
                 continue
             x = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(x)
-            x_clean = _nan_to_zero(x)
+            x_clean = _replace_nan_with_zero(x)
             next_count = count[sl] + valid
             delta = np.where(valid, x_clean - mean[sl], 0.0)
             denom = np.where(next_count > 0, next_count, 1.0)
@@ -291,7 +293,7 @@ class SpatialOverlapAdd(SpatialAggregation):
             )
             x = np.asarray(p.data, dtype=np.float64)
             valid = ~np.isnan(x)
-            acc[sl] += _nan_to_zero(x) * w * valid
+            acc[sl] += _replace_nan_with_zero(x) * w * valid
             wsum[sl] += w * valid
         if not self.normalize_by_window:
             return acc
@@ -358,7 +360,7 @@ class SpatialOverlapAdd(SpatialAggregation):
             )
             x = np.asarray(p.data, dtype=np.float32)
             valid = ~np.isnan(x)
-            rec[sl] = np.asarray(rec[sl]) + _nan_to_zero(x) * w * valid
+            rec[sl] = np.asarray(rec[sl]) + _replace_nan_with_zero(x) * w * valid
             wsum[sl] = np.asarray(wsum[sl]) + w * valid
         if self.normalize_by_window:
             arr = np.asarray(rec[:])

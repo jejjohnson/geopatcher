@@ -93,7 +93,7 @@ class SpatialPatcher:
     aggregation: SpatialAggregation
     on_error: OnErrorPolicy = "raise"
     max_retries: int = 0
-    retry_on: tuple[type[BaseException] | str, ...] = (Exception,)
+    retry_on: tuple[type[BaseException] | str, ...] = (OSError, TimeoutError)
     errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -222,7 +222,7 @@ class AsyncSpatialPatcher:
     aggregation: SpatialAggregation
     on_error: OnErrorPolicy = "raise"
     max_retries: int = 0
-    retry_on: tuple[type[BaseException] | str, ...] = (Exception,)
+    retry_on: tuple[type[BaseException] | str, ...] = (OSError, TimeoutError)
     errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -327,6 +327,8 @@ def _build_patch_with_policy(
             )
         except Exception as exc:
             # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
+            if isinstance(exc, StopIteration):
+                raise
             if on_error == "raise":
                 raise
             _record_patch_error(errors, anchor, exc, retry_count)
@@ -334,10 +336,12 @@ def _build_patch_with_policy(
                 return _build_mask_patch(
                     domain, anchor, indices, base_weights, boundary
                 )
-            if on_error == "retry" and retry_count < retries:
-                if _matches_retry_on(exc, retry_on):
+            if on_error == "retry":
+                if not _matches_retry_on(exc, retry_on):
+                    raise
+                if retry_count < retries:
                     continue
-                raise
+                return None
             return None
 
 
@@ -363,6 +367,8 @@ async def _build_patch_async_with_policy(
             )
         except Exception as exc:
             # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
+            if isinstance(exc, StopIteration):
+                raise
             if on_error == "raise":
                 raise
             _record_patch_error(errors, anchor, exc, retry_count)
@@ -370,10 +376,12 @@ async def _build_patch_async_with_policy(
                 return _build_mask_patch(
                     domain, anchor, indices, base_weights, boundary
                 )
-            if on_error == "retry" and retry_count < retries:
-                if _matches_retry_on(exc, retry_on):
+            if on_error == "retry":
+                if not _matches_retry_on(exc, retry_on):
+                    raise
+                if retry_count < retries:
                     continue
-                raise
+                return None
             return None
 
 
@@ -489,6 +497,7 @@ def _build_mask_patch(
 
 
 def _indices_hw(indices: Any) -> tuple[int, int]:
+    """Infer raster/grid mask dimensions for known patch index structures."""
     if isinstance(indices, _MaskedWindow):
         indices = indices.window
     h = getattr(indices, "height", None)

@@ -26,9 +26,11 @@ class FlakyRasterField:
         self,
         wrapped: RasterField,
         failures_by_anchor: dict[tuple[int, int], int],
+        exception_type: type[Exception] = OSError,
     ) -> None:
         self.wrapped = wrapped
         self.failures_by_anchor = dict(failures_by_anchor)
+        self.exception_type = exception_type
         self.attempts: dict[tuple[int, int], int] = {}
 
     @property
@@ -39,7 +41,7 @@ class FlakyRasterField:
         anchor = (int(indices.row_off), int(indices.col_off))
         self.attempts[anchor] = self.attempts.get(anchor, 0) + 1
         if self.attempts[anchor] <= self.failures_by_anchor.get(anchor, 0):
-            raise OSError(f"flaky read at {anchor}")
+            raise self.exception_type(f"flaky read at {anchor}")
         return self.wrapped.select(indices)
 
 
@@ -154,6 +156,30 @@ class TestSplit:
         assert len(patches) == 15
         assert flaky.attempts[(0, 16)] == 2
         assert [err.retry_count for err in patcher.errors] == [0, 1]
+
+    def test_on_error_retry_reraises_non_matching_exception(
+        self, field: RasterField
+    ) -> None:
+        flaky = FlakyRasterField(
+            field,
+            failures_by_anchor={(0, 16): 1},
+            exception_type=ValueError,
+        )
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="retry",
+            max_retries=2,
+            retry_on=(OSError,),
+        )
+
+        with pytest.raises(ValueError, match="flaky read"):
+            list(patcher.split(flaky))
+
+        assert flaky.attempts[(0, 16)] == 1
+        assert patcher.errors[0].kind == "ValueError"
 
     def test_on_error_mask_emits_nan_patch(self, field: RasterField) -> None:
         flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 1})
