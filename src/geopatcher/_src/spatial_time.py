@@ -254,6 +254,8 @@ class SpatioTemporalPatcher:
         try:
             return self.spatial.n_anchors(field)
         except Exception:
+            # Progress totals are best-effort only; if asking the spatial
+            # sampler for a count touches a backend that fails, keep splitting.
             return UNKNOWN_TOTAL
 
     def get_config(self) -> dict[str, Any]:

@@ -32,6 +32,8 @@ When a total is not cheaply knowable, patchers pass `-1`.
 ## `tqdm` progress bar
 
 ```python
+from typing import Any
+
 from tqdm import tqdm
 
 
@@ -39,7 +41,7 @@ class TqdmHook:
     def on_split_start(self, n_anchors: int) -> None:
         self.pbar = tqdm(total=None if n_anchors < 0 else n_anchors)
 
-    def on_patch_done(self, anchor, runtime_s: float, bytes_: int) -> None:
+    def on_patch_done(self, anchor: Any, runtime_s: float, bytes_: int) -> None:
         self.pbar.update(1)
 
     def on_split_end(self) -> None:
@@ -53,6 +55,8 @@ for patch in patcher.split(field, hooks=[TqdmHook()]):
 ## OpenTelemetry tracing
 
 ```python
+from typing import Any
+
 from opentelemetry import trace
 
 
@@ -61,12 +65,12 @@ class OpenTelemetryHook:
         self.tracer = tracer
         self.spans = {}
 
-    def on_patch_start(self, anchor) -> None:
+    def on_patch_start(self, anchor: Any) -> None:
         span = self.tracer.start_span("geopatcher.patch")
         span.set_attribute("geopatcher.anchor", repr(anchor))
         self.spans[repr(anchor)] = span
 
-    def on_patch_done(self, anchor, runtime_s: float, bytes_: int) -> None:
+    def on_patch_done(self, anchor: Any, runtime_s: float, bytes_: int) -> None:
         span = self.spans.pop(repr(anchor), None)
         if span is None:
             return
@@ -74,7 +78,7 @@ class OpenTelemetryHook:
         span.set_attribute("geopatcher.bytes", bytes_)
         span.end()
 
-    def on_error(self, anchor, exc: Exception) -> None:
+    def on_error(self, anchor: Any, exc: Exception) -> None:
         span = self.spans.pop(repr(anchor), None)
         if span is not None:
             span.record_exception(exc)
