@@ -109,6 +109,27 @@ for patch in patcher.split(field):
 stitched = patcher.merge(outputs, field.domain)
 ```
 
+For a built-in reference runner over independent local jobs, use
+`geopatcher.runners.parallel_map`:
+
+```python
+from geopatcher.runners import parallel_map
+
+outputs = parallel_map(patcher, field, my_operator, n_workers=8)
+stitched = patcher.merge(outputs, field.domain)
+```
+
+Operators that need global context can use the codified two-pass pattern:
+
+```python
+stats = patcher.reduce(field, agg=gp.SpatialMeanStd())
+stitched = patcher.two_pass(
+    field,
+    reduce_with=gp.SpatialMeanStd(),
+    apply=lambda data, s: my_operator((data - s["mean"]) / s["std"]),
+)
+```
+
 For integration with the [pipekit](https://github.com/jejjohnson/pipekit)
 operator-graph framework, install the optional `[pipekit]` extra (`pip
 install 'geopatcher[pipekit]'`) and import `GridSampler` /

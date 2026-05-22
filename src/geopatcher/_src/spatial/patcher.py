@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import traceback
 from asyncio import BoundedSemaphore as AsyncBoundedSemaphore, to_thread
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from dataclasses import dataclass, field, replace
 from threading import BoundedSemaphore, Condition
 from time import perf_counter
 from typing import Any, Literal
@@ -391,6 +391,36 @@ class SpatialPatcher:
         from geopatcher.dask import to_dask_bag
 
         return to_dask_bag(self, field)
+
+    def reduce(self, field: Field, agg: SpatialAggregation) -> Any:
+        """Run a streaming pass over patches and return ``agg``'s result."""
+        anchors = self.anchors(field)
+        return agg.merge(
+            (self.patch_at(field, anchor) for anchor in anchors), field.domain
+        )
+
+    def two_pass(
+        self,
+        field: Field,
+        *,
+        reduce_with: SpatialAggregation,
+        apply: Callable[[Any, Any], Any],
+        aggregation: SpatialAggregation | None = None,
+    ) -> Any:
+        """Run a global-statistics pass, then apply an operator with the result."""
+        anchors = self.anchors(field)
+        stats = reduce_with.merge(
+            (self.patch_at(field, anchor) for anchor in anchors), field.domain
+        )
+        merge_with = aggregation or self.aggregation
+        _warn_if_unsafe_streaming(merge_with)
+
+        def _applied_patches() -> Iterator[Patch]:
+            for anchor in anchors:
+                patch = self.patch_at(field, anchor)
+                yield replace(patch, data=apply(patch.data, stats))
+
+        return merge_with.merge(_applied_patches(), field.domain)
 
     def get_config(self) -> dict[str, Any]:
         return {

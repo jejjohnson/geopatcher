@@ -252,6 +252,54 @@ class SpatialVariance(SpatialAggregation):
 
 
 @dataclass(eq=False)
+class SpatialMeanStd(SpatialAggregation):
+    """Global mean and sample standard deviation across patch data."""
+
+    streaming_safe: ClassVar[bool] = True
+
+    def merge(self, patches: Iterable[Any], domain: Any) -> dict[str, float]:
+        total = 0.0
+        total_sq = 0.0
+        count = 0
+        for p in patches:
+            x = np.asarray(p.data, dtype=np.float64)
+            total += float(np.sum(x))
+            total_sq += float(np.sum(x * x))
+            count += int(x.size)
+        if count == 0:
+            raise ValueError("SpatialMeanStd requires at least one value")
+        mean = total / count
+        if count > 1:
+            var = (total_sq - count * mean * mean) / (count - 1)
+            var = max(var, 0.0)
+        else:
+            var = 0.0
+        return {"mean": mean, "std": float(np.sqrt(var))}
+
+
+@dataclass(eq=False)
+class SpatialMinMax(SpatialAggregation):
+    """Global minimum and maximum across patch data."""
+
+    streaming_safe: ClassVar[bool] = True
+
+    def merge(self, patches: Iterable[Any], domain: Any) -> dict[str, float]:
+        min_value = np.inf
+        max_value = -np.inf
+        seen = False
+        for p in patches:
+            x = np.asarray(p.data, dtype=np.float64)
+            if x.size == 0:
+                continue
+            min_value = min(min_value, float(np.min(x)))
+            max_value = max(max_value, float(np.max(x)))
+            seen = True
+        if not seen:
+            raise ValueError("SpatialMinMax requires at least one value")
+        return {"min": min_value, "max": max_value}
+
+
+@dataclass(eq=False)
 class SpatialOverlapAdd(SpatialAggregation):
     """SpatialWindow-weighted overlap-add — the canonical chip-stitching aggregator.
 
