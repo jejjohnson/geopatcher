@@ -390,6 +390,7 @@ class AsyncSpatialPatcher:
     async def split(
         self, field: AsyncField, hooks: Iterable[PatcherHook] | None = None
     ) -> AsyncIterator[Patch]:
+        """Backward-compatible alias for `asplit`."""
         async for patch in self.asplit(field, hooks=hooks):
             yield patch
 

@@ -78,23 +78,20 @@ class SpatioTemporalPatcher:
         *,
         hooks: Iterable[PatcherHook] | None = None,
     ) -> Iterator[SpatioTemporalPatch]:
+        coupling = self._checked_coupling()
         hook_list = _as_hooks(hooks)
         if not hook_list:
-            if self.coupling == "product":
+            if coupling == "product":
                 yield from self._split_product(field)
-            elif self.coupling == "coupled":
-                yield from self._split_coupled(field)
             else:
-                raise ValueError(f"unknown coupling: {self.coupling!r}")
+                yield from self._split_coupled(field)
             return
         _dispatch(hook_list, "on_split_start", self._split_total_hint(field))
         try:
-            if self.coupling == "product":
+            if coupling == "product":
                 yield from self._split_product(field, hook_list)
-            elif self.coupling == "coupled":
-                yield from self._split_coupled(field, hook_list)
             else:
-                raise ValueError(f"unknown coupling: {self.coupling!r}")
+                yield from self._split_coupled(field, hook_list)
         finally:
             _dispatch(hook_list, "on_split_end")
 
@@ -105,29 +102,31 @@ class SpatioTemporalPatcher:
         hooks: Iterable[PatcherHook] | None = None,
     ) -> AsyncIterator[SpatioTemporalPatch]:
         """Async iterator mirror of `split` for async spatial fields."""
+        coupling = self._checked_coupling()
         hook_list = _as_hooks(hooks)
         if not hook_list:
-            if self.coupling == "product":
+            if coupling == "product":
                 async for patch in self._asplit_product(field):
                     yield patch
-            elif self.coupling == "coupled":
+            else:
                 async for patch in self._asplit_coupled(field):
                     yield patch
-            else:
-                raise ValueError(f"unknown coupling: {self.coupling!r}")
             return
         _dispatch(hook_list, "on_split_start", self._split_total_hint(field))
         try:
-            if self.coupling == "product":
+            if coupling == "product":
                 async for patch in self._asplit_product(field, hook_list):
                     yield patch
-            elif self.coupling == "coupled":
+            else:
                 async for patch in self._asplit_coupled(field, hook_list):
                     yield patch
-            else:
-                raise ValueError(f"unknown coupling: {self.coupling!r}")
         finally:
             _dispatch(hook_list, "on_split_end")
+
+    def _checked_coupling(self) -> Literal["product", "coupled"]:
+        if self.coupling not in {"product", "coupled"}:
+            raise ValueError(f"unknown coupling: {self.coupling!r}")
+        return self.coupling
 
     def _split_product(
         self, field: Any, hooks: Iterable[PatcherHook] = ()
