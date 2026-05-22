@@ -21,7 +21,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync --group dev
+        # `--extra streaming` pulls in zarr so the
+        # tests/test_streaming_golden.py suite actually runs in CI
+        # instead of being silently skipped by pytest.importorskip.
+        run: uv sync --group dev --extra streaming
       - name: Run tests with coverage
         run: uv run pytest -v
       - name: Upload coverage report
