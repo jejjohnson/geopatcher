@@ -54,6 +54,11 @@ patch-full = [
     "rioxarray>=0.15",
     "zarr>=3.0",
 ]
+# Operator-graph bridge: pull in `pipekit` and the ~125-LOC wrappers in
+# `geopatcher.integrations.pipekit` (GridSampler / ApplyToChips / Stitch).
+# The patcher core stays framework-free; only this integration module
+# imports `pipekit.Operator`.
+pipekit = ["pipekit>=0.0.1"]
 
 [project.urls]
 Repository = "https://github.com/jejjohnson/geopatcher"
@@ -88,6 +93,14 @@ docs = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+# Dev-time source for the `[pipekit]` extra: pull `pipekit` from the
+# monorepo on GitHub until the first PyPI release lands. This stanza
+# affects `uv lock` / `uv sync` only — published wheel metadata still
+# carries the PyPI-flavoured `pipekit` requirement from
+# `[project.optional-dependencies] pipekit = ["pipekit>=0.0.1"]` above.
+pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geopatcher"]

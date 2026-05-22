@@ -12,10 +12,15 @@ the four axes (Geometry, Sampler, Window, Aggregation) over a `Field`
 protocol that adapts the backend substrate (raster, xarray, geopandas,
 xvec, …). Built with Python 3.12+, uv, pytest, and MkDocs.
 
-`geopatcher` has no dependency on any operator-graph composition library
-— it's a standalone framework. Integration wrappers (`GridSampler`,
-`ApplyToChips`, `Stitch`) for [geotoolz](https://github.com/jejjohnson/geotoolz)
-or similar live in the consuming library.
+`geopatcher`'s core has no dependency on any operator-graph composition
+library — it's a standalone framework. The optional
+`geopatcher.integrations.pipekit` submodule (gated behind the `[pipekit]`
+extra) provides `GridSampler` / `ApplyToChips` / `Stitch` wrappers that
+plug a `SpatialPatcher` into a [pipekit](https://github.com/jejjohnson/pipekit)
+`Sequential` pipeline. While `pipekit` is pre-PyPI, install with
+`uv sync --extra pipekit` (or `uv pip install` — see the README's
+"Pre-PyPI install" section). Plain `pip install 'geopatcher[pipekit]'`
+will work once `pipekit` reaches PyPI.
 
 ## Common Commands
 

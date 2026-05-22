@@ -47,7 +47,8 @@ time-specific properties (causality, periodicity, multi-scale, forecasting).
 pip install geopatcher
 ```
 
-Optional extras gate the non-raster `Field` adapters:
+Optional extras gate the non-raster `Field` adapters and the
+operator-graph integration:
 
 ```bash
 pip install 'geopatcher[grid]'           # XarrayField
@@ -55,8 +56,36 @@ pip install 'geopatcher[vector]'         # GeoPandasField
 pip install 'geopatcher[point]'          # XvecField
 pip install 'geopatcher[xarray-raster]'  # RioXarrayField
 pip install 'geopatcher[streaming]'      # SpatialOverlapAdd(streaming=True)
-pip install 'geopatcher[patch-full]'     # everything above
+pip install 'geopatcher[patch-full]'     # all substrate adapters
+pip install 'geopatcher[pipekit]'        # geopatcher.integrations.pipekit (once pipekit lands on PyPI)
 ```
+
+> **Pre-PyPI note.** `pipekit` isn't on PyPI yet, so the `[pipekit]`
+> extra can't be resolved by plain `pip install` today. See [Pre-PyPI
+> install](#pre-pypi-install-from-github) below for the `uv`-based
+> workflow that works in the meantime.
+
+### Pre-PyPI install (from GitHub)
+
+`pipekit` isn't on PyPI yet, so the `[pipekit]` extra can't be resolved
+by plain `pip install`. Use `uv` to clone-and-sync, which picks up the
+git source declared in `pyproject.toml`:
+
+```bash
+git clone https://github.com/jejjohnson/geopatcher.git
+cd geopatcher
+uv sync --extra pipekit          # resolves pipekit from its GitHub repo
+```
+
+Or install in one shot directly from GitHub (uv reads `[tool.uv.sources]`
+out of the requested project):
+
+```bash
+uv pip install "git+https://github.com/jejjohnson/geopatcher@main#egg=geopatcher[pipekit]"
+```
+
+Once `pipekit` ships to PyPI, plain `pip install 'geopatcher[pipekit]'`
+will work and the git source can be removed.
 
 ## Quickstart
 
@@ -80,10 +109,13 @@ for patch in patcher.split(field):
 stitched = patcher.merge(outputs, field.domain)
 ```
 
-For integration with an operator-graph composition library, see
-[geotoolz](https://github.com/jejjohnson/geotoolz), which ships
-`GridSampler` / `ApplyToChips` / `Stitch` wrappers that plug a
-`SpatialPatcher` into a `Sequential` pipeline.
+For integration with the [pipekit](https://github.com/jejjohnson/pipekit)
+operator-graph framework, install the optional `[pipekit]` extra (`pip
+install 'geopatcher[pipekit]'`) and import `GridSampler` /
+`ApplyToChips` / `Stitch` from `geopatcher.integrations.pipekit` to plug
+a `SpatialPatcher` into a `pipekit.Sequential` pipeline. The same
+wrappers are also reachable through
+[geotoolz](https://github.com/jejjohnson/geotoolz)`.patch_ops`.
 
 ## Documentation
 
