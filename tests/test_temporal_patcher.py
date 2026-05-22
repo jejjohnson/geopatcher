@@ -69,6 +69,49 @@ class TestTemporalPatcherSplit:
         # Each patch has up to 5 elements
         assert all(p.data.shape[0] <= 5 for p in patches)
 
+    def test_n_anchors_matches_split_length(self, series: np.ndarray) -> None:
+        # ADR-001: `n_anchors` is the cheap len() substitute.
+        tp = TemporalPatcher(
+            geometry=TemporalFixedLookback(length=5),
+            sampler=TemporalRegularStride(step=10),
+            window=TemporalCausalBoxcar(),
+            aggregation=TemporalMean(),
+        )
+        n = tp.n_anchors(series)
+        assert n == 10
+        assert n == sum(1 for _ in tp.split(series))
+
+    def test_n_anchors_counts_multi_scale_windows(self, series: np.ndarray) -> None:
+        # Regression: TemporalMultiScale.window returns a list[slice], so
+        # split yields N anchors * len(scales) patches. n_anchors must
+        # count the list, not just the anchors.
+        from geopatcher import TemporalMultiScale
+
+        tp = TemporalPatcher(
+            geometry=TemporalMultiScale(scales=[5, 20, 50]),
+            sampler=TemporalRegularStride(step=10),
+            window=TemporalCausalBoxcar(),
+            aggregation=TemporalMean(),
+        )
+        n = tp.n_anchors(series)
+        assert n == 10 * 3  # 10 anchors x 3 scales
+        assert n == sum(1 for _ in tp.split(series))
+
+    def test_n_anchors_does_not_materialise_series(self) -> None:
+        # Regression: n_anchors used np.asarray(series) which materialises
+        # a list / lazy array. Use np.shape so a generic shape-bearing
+        # object suffices.
+        class ShapeOnly:
+            shape = (100,)
+
+        tp = TemporalPatcher(
+            geometry=TemporalFixedLookback(length=5),
+            sampler=TemporalRegularStride(step=10),
+            window=TemporalCausalBoxcar(),
+            aggregation=TemporalMean(),
+        )
+        assert tp.n_anchors(ShapeOnly()) == 10
+
 
 class TestTemporalFold:
     def test_state_passing(self, series: np.ndarray) -> None:

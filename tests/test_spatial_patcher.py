@@ -57,6 +57,19 @@ class TestSplit:
         for patch in patcher.split(field):
             assert patch.data.shape[-2:] == (16, 16)
 
+    def test_n_anchors_matches_split_length(self, field: RasterField) -> None:
+        # ADR-001: `split` is an iterator (no len()); `n_anchors` is the
+        # cheap substitute that walks the sampler without touching the field.
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+        )
+        n = patcher.n_anchors(field)
+        assert n == 16  # 4x4 lattice
+        assert n == sum(1 for _ in patcher.split(field))
+
 
 class TestSplitMergeRoundtrip:
     def test_identity_with_boxcar_no_overlap(self, field: RasterField) -> None:
