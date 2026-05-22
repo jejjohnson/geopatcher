@@ -43,7 +43,11 @@ from geopatcher import (
 )
 
 
-zarr = pytest.importorskip("zarr")
+# Import-time skip: the streaming overlap-add path needs zarr (the
+# `streaming` extra). CI installs `--extra streaming` so this no
+# longer silently hides the suite from the matrix; locally a slim
+# install will still skip gracefully.
+pytest.importorskip("zarr")
 
 
 # ---------------------------------------------------------------------------
@@ -157,67 +161,89 @@ def test_overlap_add_streaming_chunk_size_invariant(
 # ---------------------------------------------------------------------------
 # Permutation invariance — every streaming-safe monoidal aggregation
 # ---------------------------------------------------------------------------
+#
+# The permutation tests share the `overlapping_patches` fixture
+# (12-pixel stride on 16x16 patches). Earlier drafts used a disjoint
+# tiling that touched every cell exactly once, which made the tests
+# vacuous: `SpatialSum/Max/Min/Mean/WeightedSum` collapse to a single
+# write per cell and the shuffle is a no-op, and `SpatialVariance`
+# returns 0 everywhere because Welford's count never exceeds 1.
+# Overlap is the only regime where ordering can matter (Welford's
+# intermediate `mean` updates differ; fp summation has ULP drift).
+# This is the regime the test must cover.
 
 
-@pytest.fixture
-def disjoint_patches() -> list[Patch]:
-    # Non-overlapping tiling — every cell touched exactly once. Tests
-    # the boring "associativity holds" property without OverlapAdd's
-    # weight bookkeeping muddying the picture.
-    rng = np.random.default_rng(seed=1)
-    patches: list[Patch] = []
-    for r in range(0, 64, 16):
-        for c in range(0, 64, 16):
-            data = rng.normal(loc=0.0, scale=1.0, size=(16, 16)).astype(np.float64)
-            patches.append(
-                Patch(
-                    data=data,
-                    anchor=(r, c),
-                    indices=Window(col_off=c, row_off=r, width=16, height=16),
-                    weights=np.ones((16, 16), dtype=np.float64),
-                )
-            )
-    return patches
+@pytest.mark.parametrize(
+    "agg",
+    [
+        SpatialMax(),
+        SpatialMin(),
+    ],
+    ids=lambda a: type(a).__name__,
+)
+def test_exactly_commutative_aggregations_are_bit_identical_under_permutation(
+    domain: GeoTensor, overlapping_patches: list[Patch], agg
+) -> None:
+    # `Max` and `Min` are exactly commutative-and-associative on
+    # float64, so reordering the inputs must yield the bit-identical
+    # result — no floating-point slack. A `rtol > 0` here would hide
+    # a real bug where an accumulator threaded patches through a
+    # non-commutative op.
+    forward = agg.merge(overlapping_patches, domain)
+    rng = np.random.default_rng(seed=2)
+    shuffled = list(overlapping_patches)
+    rng.shuffle(shuffled)
+    permuted = agg.merge(shuffled, domain)
+    np.testing.assert_array_equal(forward, permuted)
 
 
 @pytest.mark.parametrize(
     "agg",
     [
         SpatialSum(),
-        SpatialMax(),
-        SpatialMin(),
         SpatialMean(),
         SpatialWeightedSum(),
     ],
     ids=lambda a: type(a).__name__,
 )
-def test_monoidal_aggregations_are_permutation_invariant(
-    domain: GeoTensor, disjoint_patches: list[Patch], agg
+def test_summation_aggregations_are_permutation_invariant_to_fp(
+    domain: GeoTensor, overlapping_patches: list[Patch], agg
 ) -> None:
-    # Monoidal fold: order of inputs must not affect the merged
-    # result. Catches any accumulator that's been quietly threaded
-    # through a non-associative op.
-    forward = agg.merge(disjoint_patches, domain)
+    # `Sum`, `Mean`, `WeightedSum` are mathematically commutative but
+    # IEEE-754 float64 addition isn't bit-associative, so the order of
+    # the accumulator updates can shift the result by a handful of ULPs.
+    # A tight `rtol=1e-12` is the right ceiling — order-sensitivity
+    # below that is the cost of doing fp arithmetic; above it is a
+    # genuine bookkeeping bug.
+    forward = agg.merge(overlapping_patches, domain)
     rng = np.random.default_rng(seed=2)
-    shuffled = list(disjoint_patches)
+    shuffled = list(overlapping_patches)
     rng.shuffle(shuffled)
     permuted = agg.merge(shuffled, domain)
     np.testing.assert_allclose(forward, permuted, rtol=1e-12, atol=0)
 
 
-def test_variance_permutation_invariant(
-    domain: GeoTensor, disjoint_patches: list[Patch]
+def test_variance_permutation_invariant_under_overlap(
+    domain: GeoTensor, overlapping_patches: list[Patch]
 ) -> None:
-    # Variance uses Welford, which is order-sensitive in the
-    # intermediate accumulator but order-invariant in the final result.
-    # Tolerance is looser than the strict monoids because Welford's
-    # delta * (x - mean) step accumulates float64 ULPs differently per
-    # ordering — that's expected; we just need agreement to fp tol.
-    forward = SpatialVariance().merge(disjoint_patches, domain)
+    # Welford's running mean update is the order-sensitive step:
+    # `mean += (x - mean) / count` and `M2 += delta * (x - new_mean)`
+    # both depend on the partial-sum-so-far. Under the overlapping
+    # fixture, `count > 1` on the overlap regions, so the order
+    # actually exercises the update path. The looser tolerance
+    # reflects that — the final result is mathematically order-
+    # invariant; ULP drift is expected.
+    forward = SpatialVariance().merge(overlapping_patches, domain)
     rng = np.random.default_rng(seed=3)
-    shuffled = list(disjoint_patches)
+    shuffled = list(overlapping_patches)
     rng.shuffle(shuffled)
     permuted = SpatialVariance().merge(shuffled, domain)
+    # Sanity check the fixture: at least some cells must be touched
+    # more than once for the Welford code path to run at all.
+    assert (forward > 0.0).any(), (
+        "overlapping_patches fixture failed to produce >1 sample at "
+        "any cell — variance test would be vacuous"
+    )
     np.testing.assert_allclose(forward, permuted, rtol=1e-10, atol=1e-12)
 
 
