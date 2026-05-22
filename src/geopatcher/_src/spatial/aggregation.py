@@ -718,11 +718,10 @@ class _SketchAggregation(SpatialAggregation):
 
 
 def _patch_values(patch: Any) -> np.ndarray:
-    values = np.asarray(patch.data).reshape(-1)
+    array = np.asarray(patch.data)
+    values = array.reshape(-1)
     return (
-        values[np.isfinite(values)]
-        if np.issubdtype(values.dtype, np.number)
-        else values
+        values[np.isfinite(values)] if np.issubdtype(array.dtype, np.number) else values
     )
 
 
@@ -830,10 +829,13 @@ class SpatialApproxMode(_SketchAggregation):
             elif len(self._counts) < self.k:
                 self._counts[key] = 1
             else:
-                for item in list(self._counts):
+                drop = []
+                for item in self._counts:
                     self._counts[item] -= 1
                     if self._counts[item] == 0:
-                        del self._counts[item]
+                        drop.append(item)
+                for item in drop:
+                    del self._counts[item]
 
     def finalize(self) -> dict[Any, int]:
         return dict(
@@ -878,7 +880,7 @@ class SpatialStreamingHistogram(_SketchAggregation):
             yield from [center] * count
 
     def _merge_closest_bins(self) -> None:
-        order = list(np.argsort(self._centers))
+        order = np.argsort(self._centers)
         centers = [self._centers[i] for i in order]
         counts = [self._counts[i] for i in order]
         idx = min(

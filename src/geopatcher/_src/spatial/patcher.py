@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import traceback
 from asyncio import BoundedSemaphore as AsyncBoundedSemaphore
+from asyncio import to_thread
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from threading import BoundedSemaphore, Condition
@@ -154,7 +155,9 @@ class SpatialPatcher:
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
-        slots = BoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+        slots = (
+            BoundedSemaphore(value=max_in_flight) if max_in_flight is not None else None
+        )
         byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
             for anchor in self.sampler.anchors(domain, self.geometry):
@@ -471,7 +474,9 @@ class AsyncSpatialPatcher:
         boundary = getattr(self.geometry, "boundary", "drop")
         hook_list = _as_hooks(hooks)
         slots = (
-            AsyncBoundedSemaphore(max_in_flight) if max_in_flight is not None else None
+            AsyncBoundedSemaphore(value=max_in_flight)
+            if max_in_flight is not None
+            else None
         )
         byte_budget = _ByteBudget(max_in_flight_bytes)
         if not hook_list:
@@ -810,7 +815,7 @@ async def _acquire_backpressure_async(
     slots: AsyncBoundedSemaphore | None,
     byte_budget: _ByteBudget,
 ) -> Any | None:
-    nbytes = byte_budget.acquire(patch)
+    nbytes = await to_thread(byte_budget.acquire, patch)
     if slots is not None:
         await slots.acquire()
     if slots is None and nbytes == 0:
