@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import sys
+import warnings
 from collections.abc import Callable
 from concurrent.futures import (
     ProcessPoolExecutor,
@@ -77,9 +78,15 @@ def parallel_map(
         for future in as_completed(futures):
             try:
                 results.append(future.result())
-            except Exception:
+            except Exception as exc:
                 if on_error == "raise":
                     raise
+                warnings.warn(
+                    f"parallel_map skipped patch {futures[future]} after operator "
+                    f"error: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             done += 1
             if show_progress:
                 print(f"\r{done}/{total}", end="", file=sys.stderr)

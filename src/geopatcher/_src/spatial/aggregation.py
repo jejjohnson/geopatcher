@@ -258,22 +258,24 @@ class SpatialMeanStd(SpatialAggregation):
     streaming_safe: ClassVar[bool] = True
 
     def merge(self, patches: Iterable[Any], domain: Any) -> dict[str, float]:
-        total = 0.0
-        total_sq = 0.0
         count = 0
+        mean = 0.0
+        m2 = 0.0
         for p in patches:
-            x = np.asarray(p.data, dtype=np.float64)
-            total += float(np.sum(x))
-            total_sq += float(np.sum(x * x))
-            count += int(x.size)
+            x = np.asarray(p.data, dtype=np.float64).ravel()
+            if x.size == 0:
+                continue
+            batch_count = int(x.size)
+            batch_mean = float(np.mean(x))
+            batch_m2 = float(np.sum((x - batch_mean) ** 2))
+            next_count = count + batch_count
+            delta = batch_mean - mean
+            m2 += batch_m2 + delta * delta * count * batch_count / next_count
+            mean += delta * batch_count / next_count
+            count = next_count
         if count == 0:
             raise ValueError("SpatialMeanStd requires at least one value")
-        mean = total / count
-        if count > 1:
-            var = (total_sq - count * mean * mean) / (count - 1)
-            var = max(var, 0.0)
-        else:
-            var = 0.0
+        var = m2 / (count - 1) if count > 1 else 0.0
         return {"mean": mean, "std": float(np.sqrt(var))}
 
 

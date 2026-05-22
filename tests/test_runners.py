@@ -79,3 +79,21 @@ def test_parallel_map_process_backend_rejects_unpicklable_operator(
 
     with pytest.raises(TypeError, match="requires a picklable operator"):
         parallel_map(patcher, field, local_op, backend="process")
+
+
+def test_parallel_map_skip_policy_omits_failed_patches(
+    patcher: SpatialPatcher, field: RasterField
+) -> None:
+    anchors = patcher.anchors(field)
+
+    def fail_first_patch(data):
+        arr = np.asarray(data)
+        if arr[0, 0] == 0:
+            raise ValueError("boom")
+        return arr
+
+    with pytest.warns(RuntimeWarning, match="skipped patch"):
+        patches = parallel_map(patcher, field, fail_first_patch, on_error="skip")
+
+    assert len(patches) == len(anchors) - 1
+    assert [p.anchor for p in patches] == anchors[1:]
