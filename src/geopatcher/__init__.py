@@ -14,8 +14,10 @@ Public surface re-exports:
 - Temporal axes: re-exported from `geopatcher.time`.
 
 Operator-graph wrappers (`GridSampler`, `ApplyToChips`, `Stitch`) that bridge
-the patcher into a downstream composition library (e.g. `geotoolz`) live in
-that library, not here — geopatcher itself has no Operator dependency.
+the patcher into the `pipekit` composition framework live in the optional
+`geopatcher.integrations.pipekit` submodule, gated behind the `[pipekit]`
+extra (``pip install 'geopatcher[pipekit]'``). The patcher core itself
+remains framework-free.
 """
 
 from __future__ import annotations
