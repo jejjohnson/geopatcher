@@ -53,6 +53,10 @@ nav:
       - Patching time: notebooks/patching_time.ipynb
       - Patching streaming: notebooks/patching_streaming.ipynb
       - Catalog ↔ patching: notebooks/catalog_patching.ipynb
+  - Recipes:
+      - torch Dataset: notebooks/recipes_torch_dataset.ipynb
+      - JAX vmap: notebooks/recipes_jax_vmap.ipynb
+      - Grain MapDataset: notebooks/recipes_grain.ipynb
   - API Reference: api/reference.md
   - Contributing: contributing.md
 
