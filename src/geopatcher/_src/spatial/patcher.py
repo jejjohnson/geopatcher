@@ -13,7 +13,7 @@ See ``design.md`` §1 for the four-axis framework.
 from __future__ import annotations
 
 import traceback
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
@@ -28,6 +28,7 @@ from geopatcher._src.hooks import (
     _nbytes,
 )
 from geopatcher._src.patch import Patch
+from geopatcher._src.prefetch import prefetch_iterable
 from geopatcher._src.protocols import AsyncField, Field
 from geopatcher._src.spatial.aggregation import (
     SpatialAggregation,
@@ -116,9 +117,18 @@ class SpatialPatcher:
         _validate_error_policy(self.on_error, self.max_retries)
 
     def split(
-        self, field: Field, hooks: Iterable[PatcherHook] | None = None
+        self,
+        field: Field,
+        hooks: Iterable[PatcherHook] | None = None,
+        *,
+        prefetch: int = 0,
     ) -> Iterator[Patch]:
         """Yield patches lazily — one per anchor placed by the sampler."""
+        return prefetch_iterable(self._split(field, hooks=hooks), prefetch)
+
+    def _split(
+        self, field: Field, *, hooks: Iterable[PatcherHook] | None = None
+    ) -> Iterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
@@ -171,6 +181,47 @@ class SpatialPatcher:
                     )
                 if patch is None:
                     continue
+                _dispatch(
+                    hook_list,
+                    "on_patch_done",
+                    anchor,
+                    perf_counter() - start,
+                    _nbytes(patch.data),
+                )
+                yield patch
+        finally:
+            _dispatch(hook_list, "on_split_end")
+
+    async def asplit(
+        self,
+        field: AsyncField,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> AsyncIterator[Patch]:
+        """Async mirror of `split` over an `AsyncField`."""
+        domain = field.domain
+        base_weights = _safe_base_weights(self.window, self.geometry)
+        boundary = getattr(self.geometry, "boundary", "drop")
+        hook_list = _as_hooks(hooks)
+        if not hook_list:
+            for anchor in self.sampler.anchors(domain, self.geometry):
+                yield await _build_patch_async(
+                    field, domain, anchor, self.geometry, base_weights, boundary
+                )
+            return
+        anchors = list(self.sampler.anchors(domain, self.geometry))
+        _dispatch(hook_list, "on_split_start", len(anchors))
+        try:
+            for anchor in anchors:
+                _dispatch(hook_list, "on_patch_start", anchor)
+                start = perf_counter()
+                try:
+                    patch = await _build_patch_async(
+                        field, domain, anchor, self.geometry, base_weights, boundary
+                    )
+                except Exception as exc:
+                    _dispatch(hook_list, "on_error", anchor, exc)
+                    raise
                 _dispatch(
                     hook_list,
                     "on_patch_done",
@@ -257,6 +308,32 @@ class SpatialPatcher:
         _dispatch(hook_list, "on_merge_end", _nbytes(output))
         return output
 
+    async def amerge(
+        self,
+        patches: AsyncIterable[Any] | Iterable[Any],
+        domain: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Any:
+        """Async-friendly merge that accepts async or sync patch iterables."""
+        if isinstance(patches, AsyncIterable):
+            materialized = []
+            async for patch in patches:
+                materialized.append(patch)
+            return self.merge(materialized, domain, hooks=hooks)
+        return self.merge(patches, domain, hooks=hooks)
+
+    def to_delayed(self, field: Field, operator: Any | None = None) -> list[Any]:
+        """Build a Dask delayed graph for patches, optionally mapped by an operator."""
+        from geopatcher.dask import to_delayed
+
+        return to_delayed(self, field, operator)
+
+    def to_dask_bag(self, field: Field) -> Any:
+        """Build a Dask bag containing one item per patch."""
+        from geopatcher.dask import to_dask_bag
+
+        return to_dask_bag(self, field)
+
     def get_config(self) -> dict[str, Any]:
         return {
             "geometry": {
@@ -312,6 +389,15 @@ class AsyncSpatialPatcher:
 
     async def split(
         self, field: AsyncField, hooks: Iterable[PatcherHook] | None = None
+    ) -> AsyncIterator[Patch]:
+        async for patch in self.asplit(field, hooks=hooks):
+            yield patch
+
+    async def asplit(
+        self,
+        field: AsyncField,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
     ) -> AsyncIterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
@@ -422,6 +508,19 @@ class AsyncSpatialPatcher:
             raise
         _dispatch(hook_list, "on_merge_end", _nbytes(output))
         return output
+
+    async def amerge(
+        self,
+        patches: AsyncIterable[Any] | Iterable[Any],
+        domain: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Any:
+        if isinstance(patches, AsyncIterable):
+            materialized = []
+            async for patch in patches:
+                materialized.append(patch)
+            return self.merge(materialized, domain, hooks=hooks)
+        return self.merge(patches, domain, hooks=hooks)
 
 
 def _safe_base_weights(
@@ -625,7 +724,7 @@ async def _build_patch_async_from_indices(
 ) -> Patch:
     if boundary == "raise":
         _raise_if_overflows(indices, domain)
-    data = await field.select(_unwrap_for_select(indices))
+    data = await _select_async(field, _unwrap_for_select(indices))
     weights = _build_weights(indices, base_weights, boundary=boundary)
     return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
@@ -672,6 +771,13 @@ def _indices_hw(indices: Any) -> tuple[int, int]:
         if len(sizes) >= 2:
             return sizes[-2], sizes[-1]
     raise ValueError(f"cannot infer mask shape for indices {indices!r}")
+
+
+async def _select_async(field: AsyncField, indexer: Any) -> Any:
+    aselect = getattr(field, "aselect", None)
+    if aselect is not None:
+        return await aselect(indexer)
+    return await field.select(indexer)
 
 
 def _unwrap_for_select(indices: Any) -> Any:

@@ -46,6 +46,8 @@ vector = ["geopandas>=0.14", "shapely>=2.0"]
 point = ["xvec>=0.4"]
 xarray-raster = ["rioxarray>=0.15", "xarray>=2024.1"]
 streaming = ["zarr>=3.0"]
+dask = ["dask[bag]>=2024.8.3", "xarray>=2024.1"]
+jax = ["jax>=0.4.23"]
 patch-full = [
     "xarray>=2024.1",
     "geopandas>=0.14",
@@ -53,6 +55,8 @@ patch-full = [
     "xvec>=0.4",
     "rioxarray>=0.15",
     "zarr>=3.0",
+    "dask[bag]>=2024.8.3",
+    "jax>=0.4.23",
 ]
 # Operator-graph bridge: pull in `pipekit` and the ~125-LOC wrappers in
 # `geopatcher.integrations.pipekit` (GridSampler / ApplyToChips / Stitch).

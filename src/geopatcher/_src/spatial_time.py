@@ -16,7 +16,7 @@ spatial slice, then the temporal slice, then yields a `SpatioTemporalPatch`.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal
@@ -32,7 +32,9 @@ from geopatcher._src.hooks import (
     _nbytes,
 )
 from geopatcher._src.patch import SpatioTemporalPatch, TemporalPatch
+from geopatcher._src.prefetch import prefetch_iterable
 from geopatcher._src.spatial import SpatialPatcher
+from geopatcher._src.spatial.patcher import _select_async
 from geopatcher._src.time.patcher import TemporalPatcher
 
 
@@ -56,7 +58,11 @@ class SpatioTemporalPatcher:
     time_axis: int = 0
 
     def split(
-        self, field: Any, hooks: Iterable[PatcherHook] | None = None
+        self,
+        field: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+        *,
+        prefetch: int = 0,
     ) -> Iterator[SpatioTemporalPatch]:
         """Yield `SpatioTemporalPatch`es lazily.
 
@@ -64,6 +70,14 @@ class SpatioTemporalPatcher:
         an iterable of ``(space_anchor, time_anchor)`` tuples and is
         only valid with `SpatialExplicit` spatial / time samplers.
         """
+        return prefetch_iterable(self._split(field, hooks=hooks), prefetch)
+
+    def _split(
+        self,
+        field: Any,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Iterator[SpatioTemporalPatch]:
         hook_list = _as_hooks(hooks)
         if not hook_list:
             if self.coupling == "product":
@@ -79,6 +93,37 @@ class SpatioTemporalPatcher:
                 yield from self._split_product(field, hook_list)
             elif self.coupling == "coupled":
                 yield from self._split_coupled(field, hook_list)
+            else:
+                raise ValueError(f"unknown coupling: {self.coupling!r}")
+        finally:
+            _dispatch(hook_list, "on_split_end")
+
+    async def asplit(
+        self,
+        field: Any,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> AsyncIterator[SpatioTemporalPatch]:
+        """Async iterator mirror of `split` for async spatial fields."""
+        hook_list = _as_hooks(hooks)
+        if not hook_list:
+            if self.coupling == "product":
+                async for patch in self._asplit_product(field):
+                    yield patch
+            elif self.coupling == "coupled":
+                async for patch in self._asplit_coupled(field):
+                    yield patch
+            else:
+                raise ValueError(f"unknown coupling: {self.coupling!r}")
+            return
+        _dispatch(hook_list, "on_split_start", self._split_total_hint(field))
+        try:
+            if self.coupling == "product":
+                async for patch in self._asplit_product(field, hook_list):
+                    yield patch
+            elif self.coupling == "coupled":
+                async for patch in self._asplit_coupled(field, hook_list):
+                    yield patch
             else:
                 raise ValueError(f"unknown coupling: {self.coupling!r}")
         finally:
@@ -142,6 +187,97 @@ class SpatioTemporalPatcher:
             try:
                 indices = self.spatial.geometry.neighborhood(field.domain, space_anchor)
                 data = field.select(indices)
+                arr = np.asarray(data)
+                time_len = int(arr.shape[self.time_axis])
+                t_window = self.temporal.geometry.window(time_len, int(time_anchor))
+                slices = t_window if isinstance(t_window, list) else [t_window]
+                try:
+                    base_weights = self.spatial.window.weights(self.spatial.geometry)
+                except TypeError:
+                    base_weights = None
+            except Exception as exc:
+                _dispatch(hooks, "on_error", anchor, exc)
+                raise
+            for s in slices:
+                try:
+                    idx = [slice(None)] * arr.ndim
+                    idx[self.time_axis] = s
+                    sub = arr[tuple(idx)]
+                    patch = SpatioTemporalPatch(
+                        data=sub,
+                        space=space_anchor,
+                        time=int(time_anchor),
+                        spatial_indices=indices,
+                        temporal_indices=s,
+                        weights=base_weights,
+                    )
+                except Exception as exc:
+                    _dispatch(hooks, "on_error", anchor, exc)
+                    raise
+                _dispatch(
+                    hooks,
+                    "on_patch_done",
+                    anchor,
+                    perf_counter() - start,
+                    _nbytes(patch.data),
+                )
+                yield patch
+
+    async def _asplit_product(
+        self, field: Any, hooks: Iterable[PatcherHook] = ()
+    ) -> AsyncIterator[SpatioTemporalPatch]:
+        async for sp in self.spatial.asplit(field):
+            arr = np.asarray(sp.data)
+            time_len = int(arr.shape[self.time_axis])
+            for t_anchor in self.temporal.sampler.anchors(time_len):
+                t_window = self.temporal.geometry.window(time_len, int(t_anchor))
+                slices = t_window if isinstance(t_window, list) else [t_window]
+                for s in slices:
+                    anchor = (sp.anchor, int(t_anchor))
+                    _dispatch(hooks, "on_patch_start", anchor)
+                    start = perf_counter()
+                    try:
+                        idx = [slice(None)] * arr.ndim
+                        idx[self.time_axis] = s
+                        sub = arr[tuple(idx)]
+                        patch = SpatioTemporalPatch(
+                            data=sub,
+                            space=sp.anchor,
+                            time=int(t_anchor),
+                            spatial_indices=sp.indices,
+                            temporal_indices=s,
+                            weights=sp.weights,
+                        )
+                    except Exception as exc:
+                        _dispatch(hooks, "on_error", anchor, exc)
+                        raise
+                    _dispatch(
+                        hooks,
+                        "on_patch_done",
+                        anchor,
+                        perf_counter() - start,
+                        _nbytes(patch.data),
+                    )
+                    yield patch
+
+    async def _asplit_coupled(
+        self, field: Any, hooks: Iterable[PatcherHook] = ()
+    ) -> AsyncIterator[SpatioTemporalPatch]:
+        anchors = getattr(self.spatial.sampler, "anchors_", None)
+        if anchors is None:
+            raise TypeError(
+                "coupled coupling requires the spatial sampler to expose an "
+                "`anchors_` list of (space_anchor, time_anchor) tuples — i.e. "
+                "use SpatialExplicit(anchors_=[...])."
+            )
+        for pair in anchors:
+            space_anchor, time_anchor = pair
+            anchor = (space_anchor, int(time_anchor))
+            _dispatch(hooks, "on_patch_start", anchor)
+            start = perf_counter()
+            try:
+                indices = self.spatial.geometry.neighborhood(field.domain, space_anchor)
+                data = await _select_async(field, indices)
                 arr = np.asarray(data)
                 time_len = int(arr.shape[self.time_axis])
                 t_window = self.temporal.geometry.window(time_len, int(time_anchor))

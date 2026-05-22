@@ -7,7 +7,7 @@ field along its time dimension; for each anchor it produces a
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -22,6 +22,7 @@ from geopatcher._src.hooks import (
     _nbytes,
 )
 from geopatcher._src.patch import TemporalPatch
+from geopatcher._src.prefetch import prefetch_iterable
 from geopatcher._src.time.aggregation import TemporalAggregation
 from geopatcher._src.time.geometry import TemporalGeometry
 from geopatcher._src.time.sampler import TemporalSampler
@@ -62,6 +63,8 @@ class TemporalPatcher:
         series: Any,
         time_axis: int = 0,
         hooks: Iterable[PatcherHook] | None = None,
+        *,
+        prefetch: int = 0,
     ) -> Iterator[TemporalPatch]:
         """Yield temporal patches lazily.
 
@@ -70,7 +73,18 @@ class TemporalPatcher:
                 slice along ``time_axis``.
             time_axis: Which axis is the time axis. Default 0.
             hooks: Optional observability hooks for split callbacks.
+            prefetch: If positive, eagerly buffer up to ``prefetch`` patches
+                in a background thread for I/O overlap.
         """
+        return prefetch_iterable(self._split(series, time_axis, hooks=hooks), prefetch)
+
+    def _split(
+        self,
+        series: Any,
+        time_axis: int = 0,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Iterator[TemporalPatch]:
         arr = np.asarray(series)
         time_len = int(arr.shape[time_axis])
         hook_list = _as_hooks(hooks)
@@ -89,6 +103,17 @@ class TemporalPatcher:
                 )
         finally:
             _dispatch(hook_list, "on_split_end")
+
+    async def asplit(
+        self,
+        series: Any,
+        time_axis: int = 0,
+        *,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> AsyncIterator[TemporalPatch]:
+        """Async iterator mirror of `split` for async pipeline composition."""
+        for patch in self._split(series, time_axis, hooks=hooks):
+            yield patch
 
     def patches_at(
         self, series: Any, anchor: int, time_axis: int = 0

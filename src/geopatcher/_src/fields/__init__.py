@@ -20,6 +20,7 @@ from geopatcher._src.fields.raster import (
 
 __all__ = [
     "AsyncRasterField",
+    "DaskField",
     "RasterField",
 ]
 
@@ -47,4 +48,8 @@ def __getattr__(name: str):
         from geopatcher._src.fields.rio_xarray import RioXarrayField
 
         return RioXarrayField
+    if name == "DaskField":
+        from geopatcher._src.fields.dask import DaskField
+
+        return DaskField
     raise AttributeError(name)

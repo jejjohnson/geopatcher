@@ -76,6 +76,9 @@ class AsyncRasterField:
         return self.reader
 
     async def select(self, window: Any) -> GeoTensor:
+        return await self.aselect(window)
+
+    async def aselect(self, window: Any) -> GeoTensor:
         return await self.reader.read_from_window(window, boundless=True)
 
     def with_data(self, array: Any) -> GeoTensor:
