@@ -42,6 +42,12 @@ def _as_hooks(hooks: Iterable[PatcherHook] | None) -> tuple[PatcherHook, ...]:
 def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
     """Call ``method`` on each hook that implements it.
 
+    Patcher methods call this after materialising user-provided iterables with
+    `_as_hooks`, so generator-backed hook lists are safe to reuse across all
+    callbacks in a split or merge lifecycle. The warning `stacklevel` assumes a
+    direct call from a patcher method or helper so users see the patcher call
+    site rather than this internal dispatcher.
+
     Hook failures are intentionally downgraded to warnings: callbacks are
     observability side effects and must not change patcher correctness.
     """
@@ -67,6 +73,12 @@ def _len_or_unknown(values: Iterable[Any]) -> int:
 
 
 def _nbytes(value: Any) -> int:
+    """Best-effort byte count for patch data and aggregation outputs.
+
+    Prefer direct ``.nbytes`` (NumPy arrays and many array-like objects), then
+    ``.values.nbytes`` for xarray / GeoTensor-style wrappers, then
+    ``.data.nbytes`` for backends that expose their array under ``data``.
+    """
     for candidate in (
         value,
         getattr(value, "values", None),

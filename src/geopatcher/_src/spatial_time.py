@@ -256,6 +256,7 @@ class SpatioTemporalPatcher:
         except Exception:
             # Progress totals are best-effort only; if asking the spatial
             # sampler for a count touches a backend that fails, keep splitting.
+            # The broad catch is intentional because this path is only a hint.
             return UNKNOWN_TOTAL
 
     def get_config(self) -> dict[str, Any]:

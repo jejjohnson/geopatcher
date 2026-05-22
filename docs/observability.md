@@ -61,7 +61,7 @@ from opentelemetry import trace
 
 
 class OpenTelemetryHook:
-    def __init__(self, tracer) -> None:
+    def __init__(self, tracer: trace.Tracer) -> None:
         self.tracer = tracer
         self.spans = {}
 
