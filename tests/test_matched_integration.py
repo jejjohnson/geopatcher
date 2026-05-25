@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pytest
 import rasterio
 from georeader.geotensor import GeoTensor
 
@@ -147,13 +148,19 @@ class TestNonIdentityCoreg:
     """
 
     def test_coreg_offset_applied_per_patch(self) -> None:
-        primary_tensor = _gt(np.zeros((8, 8), dtype=np.float32))
+        # Primary is *non-zero* and varies across patches so the
+        # coreg's `shift_by_primary_mean` produces a different
+        # output per patch — proves the callable actually runs
+        # (a no-op pipeline that skipped coreg entirely would
+        # produce all 7s and silently pass an all-zero-primary
+        # version of this test).
+        primary_values = np.fromfunction(
+            lambda i, _j: i.astype(np.float32), (8, 8)
+        )  # row index 0..7 in every column
+        primary_tensor = _gt(primary_values)
         secondary_tensor = _gt(np.ones((8, 8), dtype=np.float32) * 7.0)
 
         def shift_by_primary_mean(raw: Any, primary: Any) -> Any:
-            # A pretend coregistration that uses both arguments: add
-            # the primary's per-patch mean to the secondary. The
-            # primary is all zeros here so the result equals `raw`.
             primary_arr = np.asarray(primary)
             return np.asarray(raw) + primary_arr.mean()
 
@@ -170,10 +177,19 @@ class TestNonIdentityCoreg:
                 aggregation=SpatialSum(),
             )
         )
-        for mp in msp.split(mf):
-            secondary = np.asarray(mp.members["sec"].data)
-            # primary mean is 0 → secondary unchanged (all 7s).
-            np.testing.assert_array_equal(secondary, 7.0)
+        # Expected per-patch primary means:
+        # - top patches (rows 0-3):    mean = 1.5 → secondary = 8.5
+        # - bottom patches (rows 4-7): mean = 5.5 → secondary = 12.5
+        observed = {
+            mp.anchor[0]: float(np.asarray(mp.members["sec"].data).mean())
+            for mp in msp.split(mf)
+        }
+        # Anchor row 0 = top patches, row 4 = bottom patches.
+        assert observed[0] == pytest.approx(8.5)
+        assert observed[4] == pytest.approx(12.5)
+        # If coreg had been skipped entirely, both would equal 7.0.
+        assert observed[0] != 7.0
+        assert observed[4] != 7.0
 
     def test_coreg_callable_called_with_correct_arity(self) -> None:
         primary_tensor = _gt(np.ones((4, 4), dtype=np.float32) * 3.0)
