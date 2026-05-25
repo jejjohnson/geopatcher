@@ -13,16 +13,17 @@ It satisfies the existing `Field` Protocol by exposing the primary's
 ``domain`` and delegating reads through ``select``. On each
 ``select(indexer)`` it:
 
-1. reads the primary's patch,
-2. reads each secondary's raw patch at the same anchor,
-3. pipes the (secondary_raw, primary_patch) pair through that
+1. reads the primary's data,
+2. reads each secondary's raw data at the same indexer,
+3. pipes the (secondary_raw, primary_data) pair through that
    secondary's coreg callable,
-4. packs everything into a `MatchedPatch`.
+4. returns a ``dict[str, data]`` keyed by source name (primary first).
 
 Because it *is* a `Field`, every existing `SpatialPatcher` /
 geometry / sampler / window / aggregation works on it unchanged.
-
-Scaffolding — `select()` raises `NotImplementedError`.
+The per-source data dict travels through the outer ``Patch.data``
+field; `MatchedSpatialPatcher.split` unpacks it into a
+`MatchedPatch` for matched-aware consumers.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
-    from geopatcher._src.matched.patch import MatchedPatch
     from geopatcher._src.protocols import Domain, Field
 
 
@@ -104,19 +104,31 @@ class MatchedField:
         """Forward the primary's domain so existing samplers work."""
         return self.primary.domain
 
-    def select(self, indexer: Any) -> MatchedPatch:
-        """Read primary + all secondaries at ``indexer`` and align.
+    def select(self, indexer: Any) -> dict[str, Any]:
+        """Read primary + all secondaries at ``indexer`` and align them.
 
-        Body lands in Phase 4 (see design §6.2). The contract is:
+        Returns a `dict[str, data]` keyed by source name — the primary
+        under ``PRIMARY_KEY`` (``"primary"``), each secondary under
+        the name supplied to `MatchedField.secondaries`. The values
+        are whatever the underlying Fields' `select` returns: a
+        `GeoTensor` for raster, a sub-`xarray.DataArray` for grid, etc.
 
-        1. ``self.primary.select(indexer)`` → primary patch.
-        2. For each ``name, sec in self.secondaries.items()``:
-           ``sec.select(indexer)`` → raw secondary patch.
-        3. ``self.coreg[name](raw_data, primary_data)`` →
-           aligned secondary data, wrapped back into a `Patch`.
-        4. Build & return a `MatchedPatch`.
+        The per-source aligned data flows through `Patch.data` when
+        a plain `SpatialPatcher` consumes a `MatchedField`. Consumers
+        that want the matched-patch carrier shape go through
+        `MatchedSpatialPatcher.split`, which unpacks the dict.
         """
-        raise NotImplementedError("Phase 4 PR — see design §6.2 and ADR-003.")
+        from geopatcher._src.matched.patch import PRIMARY_KEY
+
+        primary_data = self.primary.select(indexer)
+        result: dict[str, Any] = {PRIMARY_KEY: primary_data}
+        for name, sec in self.secondaries.items():
+            raw = sec.select(indexer)
+            # Coreg callable: (secondary_raw, primary_data) -> aligned.
+            # The runtime contract is intentionally loose so any
+            # callable — pipekit.Operator, partial, lambda — works.
+            result[name] = self.coreg[name](raw, primary_data)
+        return result
 
     def with_data(self, array: Any) -> Any:
         """Forward to the primary; ``MatchedField.merge`` is per-source.
