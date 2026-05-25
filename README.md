@@ -119,10 +119,14 @@ outputs = parallel_map(patcher, field, my_operator, n_workers=8)
 stitched = patcher.merge(outputs, field.domain)
 ```
 
-Operators that need global context can use the codified two-pass pattern:
+Operators that need global context can use the codified two-pass pattern.
+`reduce` runs a single streaming pass and returns the aggregator's result;
+`two_pass` chains pass-1 stats into a pass-2 operator that takes
+``(data, stats)``:
 
 ```python
 stats = patcher.reduce(field, agg=gp.SpatialMeanStd())
+
 stitched = patcher.two_pass(
     field,
     reduce_with=gp.SpatialMeanStd(),
