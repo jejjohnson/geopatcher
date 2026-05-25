@@ -63,6 +63,33 @@ class MatchedPatch:
 
     PRIMARY_KEY = PRIMARY_KEY
 
+    def __post_init__(self) -> None:
+        # Enforce the invariant the docstring promises: every
+        # `MatchedPatch` carries a primary member under `PRIMARY_KEY`.
+        # Without this guard, a malformed construction only fails later
+        # at `mp.primary` access — much harder to debug.
+        if PRIMARY_KEY not in self.members:
+            raise ValueError(
+                f"MatchedPatch.members must contain the primary key "
+                f"{PRIMARY_KEY!r}; got keys {sorted(self.members)!r}."
+            )
+        # `valid_mask` / `weights` are per-member auxiliaries; their
+        # keys must be a subset of `members`, otherwise a stale mask
+        # silently rides along after a member is dropped.
+        member_keys = set(self.members)
+        for attr_name, attr in (
+            ("valid_mask", self.valid_mask),
+            ("weights", self.weights),
+        ):
+            if attr is None:
+                continue
+            extra = set(attr) - member_keys
+            if extra:
+                raise ValueError(
+                    f"MatchedPatch.{attr_name} has keys not present in members: "
+                    f"{sorted(extra)!r}."
+                )
+
     @property
     def primary(self) -> Patch:
         """Convenience accessor for ``members[PRIMARY_KEY]``."""

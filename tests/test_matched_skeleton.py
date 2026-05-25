@@ -112,6 +112,16 @@ class TestMatchedField:
         assert mf.secondaries == {}
         assert mf.coreg == {}
 
+    def test_secondary_named_primary_rejected(self) -> None:
+        # "primary" is reserved for the primary in `MatchedPatch.members`;
+        # a secondary with that name would silently overwrite it.
+        with pytest.raises(ValueError, match="reserved key 'primary'"):
+            MatchedField(
+                primary=_StubField("p"),
+                secondaries={"primary": _StubField("dup")},
+                coreg={"primary": lambda raw, prim: raw},
+            )
+
 
 class TestMatchedPatch:
     def test_primary_accessor(self) -> None:
@@ -137,6 +147,38 @@ class TestMatchedPatch:
     def test_is_not_subclass_of_patch(self) -> None:
         # ADR-003: sibling carrier, not subclass.
         assert not issubclass(MatchedPatch, Patch)
+
+    def test_missing_primary_rejected(self) -> None:
+        # The docstring promises `members["primary"]` always exists —
+        # enforce it at construction time so the failure mode is
+        # immediate, not a later KeyError on `.primary`.
+        with pytest.raises(ValueError, match="must contain the primary key"):
+            MatchedPatch(
+                anchor=(0, 0),
+                members={"s2": Patch(data="s", anchor=(0, 0), indices=None)},
+            )
+
+    def test_valid_mask_keys_must_subset_members(self) -> None:
+        import numpy as np
+
+        # A stale mask whose key is no longer in `members` is a silent
+        # bug source — reject up front.
+        with pytest.raises(ValueError, match="valid_mask has keys not present"):
+            MatchedPatch(
+                anchor=(0, 0),
+                members={PRIMARY_KEY: Patch(data="p", anchor=(0, 0), indices=None)},
+                valid_mask={"ghost": np.zeros((2, 2), dtype=bool)},
+            )
+
+    def test_weights_keys_must_subset_members(self) -> None:
+        import numpy as np
+
+        with pytest.raises(ValueError, match="weights has keys not present"):
+            MatchedPatch(
+                anchor=(0, 0),
+                members={PRIMARY_KEY: Patch(data="p", anchor=(0, 0), indices=None)},
+                weights={"ghost": np.ones((2, 2))},
+            )
 
 
 class TestMatchedSpatialPatcher:

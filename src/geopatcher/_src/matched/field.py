@@ -76,6 +76,10 @@ class MatchedField:
     valid_mask: bool = True
 
     def __post_init__(self) -> None:
+        # Avoid late-import cycle: `patch.py` imports from this module
+        # under TYPE_CHECKING and vice versa.
+        from geopatcher._src.matched.patch import PRIMARY_KEY
+
         sec_keys = set(self.secondaries.keys())
         cor_keys = set(self.coreg.keys())
         if sec_keys != cor_keys:
@@ -85,6 +89,14 @@ class MatchedField:
                 "MatchedField.secondaries and .coreg must have the same keys; "
                 f"missing coreg for {sorted(missing)!r}, "
                 f"extra coreg for {sorted(extra)!r}."
+            )
+        # `PRIMARY_KEY` is reserved for the primary in `MatchedPatch.members`;
+        # a secondary named "primary" would silently overwrite it on
+        # patch construction. Reject up front with a clear message.
+        if PRIMARY_KEY in sec_keys:
+            raise ValueError(
+                f"MatchedField.secondaries cannot use the reserved key "
+                f"{PRIMARY_KEY!r}; pick another name."
             )
 
     @property

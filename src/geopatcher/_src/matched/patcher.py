@@ -27,11 +27,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from geopatcher._src.matched.field import MatchedField
     from geopatcher._src.matched.patch import MatchedPatch
+    from geopatcher._src.protocols import Field
     from geopatcher._src.spatial.aggregation import SpatialAggregation
     from geopatcher._src.spatial.patcher import SpatialPatcher
 
 
-@dataclass
+@dataclass(eq=False)
 class MatchedSpatialPatcher:
     """Spatial patcher that yields `MatchedPatch`es and merges per-source.
 
@@ -72,7 +73,7 @@ class MatchedSpatialPatcher:
         self,
         patches: Iterable[MatchedPatch],
         mfield: MatchedField,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Field]:
         """Per-source merge: dict of ``name -> reconstructed Field``.
 
         Returns the primary under the same key the matched-patches
