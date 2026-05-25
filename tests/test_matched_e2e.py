@@ -75,7 +75,7 @@ class _RecordingPrimaryPatcher:
         self.aggregation = aggregation
         self.merge_calls: list[tuple[list[Any], Any]] = []
 
-    def split(self, field: Any) -> Iterator[Any]:
+    def split(self, field: Any, hooks: Any = None) -> Iterator[Any]:
         from geopatcher._src.patch import Patch
 
         for anchor in self.anchors_:
@@ -89,7 +89,7 @@ class _RecordingPrimaryPatcher:
     def anchors(self, field: Any) -> list[Any]:
         return list(self.anchors_)
 
-    def merge(self, patches: list[Any], domain: Any) -> Any:
+    def merge(self, patches: list[Any], domain: Any, hooks: Any = None) -> Any:
         self.merge_calls.append((list(patches), domain))
         return self.aggregation.merge(patches, domain)
 

@@ -11,6 +11,7 @@ walkthrough see [Patching](../patching.md).
 
 ## Protocols
 
+::: geopatcher._src.hooks.PatcherHook
 ::: geopatcher._src.protocols.Field
 ::: geopatcher._src.protocols.AsyncField
 ::: geopatcher._src.protocols.Domain
@@ -128,4 +129,3 @@ from geopatcher.fields import XarrayField, GeoPandasField, XvecField
 ::: geopatcher._src.time.aggregation.TemporalMean
 ::: geopatcher._src.time.aggregation.TemporalHierarchicalCombine
 ::: geopatcher._src.time.aggregation.TemporalForecast
-

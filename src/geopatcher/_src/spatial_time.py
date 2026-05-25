@@ -18,10 +18,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Literal
 
 import numpy as np
 
+from geopatcher._src.hooks import (
+    UNKNOWN_TOTAL,
+    PatcherHook,
+    _as_hooks,
+    _dispatch,
+    _len_or_unknown,
+    _nbytes,
+)
 from geopatcher._src.patch import SpatioTemporalPatch, TemporalPatch
 from geopatcher._src.spatial import SpatialPatcher
 from geopatcher._src.time.patcher import TemporalPatcher
@@ -46,21 +55,38 @@ class SpatioTemporalPatcher:
     coupling: Literal["product", "coupled"] = "product"
     time_axis: int = 0
 
-    def split(self, field: Any) -> Iterator[SpatioTemporalPatch]:
+    def split(
+        self, field: Any, hooks: Iterable[PatcherHook] | None = None
+    ) -> Iterator[SpatioTemporalPatch]:
         """Yield `SpatioTemporalPatch`es lazily.
 
         The coupled mode expects ``self.spatial.sampler.anchors_`` to be
         an iterable of ``(space_anchor, time_anchor)`` tuples and is
         only valid with `SpatialExplicit` spatial / time samplers.
         """
-        if self.coupling == "product":
-            yield from self._split_product(field)
-        elif self.coupling == "coupled":
-            yield from self._split_coupled(field)
-        else:
-            raise ValueError(f"unknown coupling: {self.coupling!r}")
+        hook_list = _as_hooks(hooks)
+        if not hook_list:
+            if self.coupling == "product":
+                yield from self._split_product(field)
+            elif self.coupling == "coupled":
+                yield from self._split_coupled(field)
+            else:
+                raise ValueError(f"unknown coupling: {self.coupling!r}")
+            return
+        _dispatch(hook_list, "on_split_start", self._split_total_hint(field))
+        try:
+            if self.coupling == "product":
+                yield from self._split_product(field, hook_list)
+            elif self.coupling == "coupled":
+                yield from self._split_coupled(field, hook_list)
+            else:
+                raise ValueError(f"unknown coupling: {self.coupling!r}")
+        finally:
+            _dispatch(hook_list, "on_split_end")
 
-    def _split_product(self, field: Any) -> Iterator[SpatioTemporalPatch]:
+    def _split_product(
+        self, field: Any, hooks: Iterable[PatcherHook] = ()
+    ) -> Iterator[SpatioTemporalPatch]:
         for sp in self.spatial.split(field):
             arr = np.asarray(sp.data)
             time_len = int(arr.shape[self.time_axis])
@@ -68,19 +94,36 @@ class SpatioTemporalPatcher:
                 t_window = self.temporal.geometry.window(time_len, int(t_anchor))
                 slices = t_window if isinstance(t_window, list) else [t_window]
                 for s in slices:
-                    idx = [slice(None)] * arr.ndim
-                    idx[self.time_axis] = s
-                    sub = arr[tuple(idx)]
-                    yield SpatioTemporalPatch(
-                        data=sub,
-                        space=sp.anchor,
-                        time=int(t_anchor),
-                        spatial_indices=sp.indices,
-                        temporal_indices=s,
-                        weights=sp.weights,
+                    anchor = (sp.anchor, int(t_anchor))
+                    _dispatch(hooks, "on_patch_start", anchor)
+                    start = perf_counter()
+                    try:
+                        idx = [slice(None)] * arr.ndim
+                        idx[self.time_axis] = s
+                        sub = arr[tuple(idx)]
+                        patch = SpatioTemporalPatch(
+                            data=sub,
+                            space=sp.anchor,
+                            time=int(t_anchor),
+                            spatial_indices=sp.indices,
+                            temporal_indices=s,
+                            weights=sp.weights,
+                        )
+                    except Exception as exc:
+                        _dispatch(hooks, "on_error", anchor, exc)
+                        raise
+                    _dispatch(
+                        hooks,
+                        "on_patch_done",
+                        anchor,
+                        perf_counter() - start,
+                        _nbytes(patch.data),
                     )
+                    yield patch
 
-    def _split_coupled(self, field: Any) -> Iterator[SpatioTemporalPatch]:
+    def _split_coupled(
+        self, field: Any, hooks: Iterable[PatcherHook] = ()
+    ) -> Iterator[SpatioTemporalPatch]:
         anchors = getattr(self.spatial.sampler, "anchors_", None)
         if anchors is None:
             raise TypeError(
@@ -93,30 +136,54 @@ class SpatioTemporalPatcher:
         # treat negative-time anchors as the caller's responsibility.
         for pair in anchors:
             space_anchor, time_anchor = pair
-            indices = self.spatial.geometry.neighborhood(field.domain, space_anchor)
-            data = field.select(indices)
-            arr = np.asarray(data)
-            time_len = int(arr.shape[self.time_axis])
-            t_window = self.temporal.geometry.window(time_len, int(time_anchor))
-            slices = t_window if isinstance(t_window, list) else [t_window]
+            anchor = (space_anchor, int(time_anchor))
+            _dispatch(hooks, "on_patch_start", anchor)
+            start = perf_counter()
             try:
-                base_weights = self.spatial.window.weights(self.spatial.geometry)
-            except TypeError:
-                base_weights = None
+                indices = self.spatial.geometry.neighborhood(field.domain, space_anchor)
+                data = field.select(indices)
+                arr = np.asarray(data)
+                time_len = int(arr.shape[self.time_axis])
+                t_window = self.temporal.geometry.window(time_len, int(time_anchor))
+                slices = t_window if isinstance(t_window, list) else [t_window]
+                try:
+                    base_weights = self.spatial.window.weights(self.spatial.geometry)
+                except TypeError:
+                    base_weights = None
+            except Exception as exc:
+                _dispatch(hooks, "on_error", anchor, exc)
+                raise
             for s in slices:
-                idx = [slice(None)] * arr.ndim
-                idx[self.time_axis] = s
-                sub = arr[tuple(idx)]
-                yield SpatioTemporalPatch(
-                    data=sub,
-                    space=space_anchor,
-                    time=int(time_anchor),
-                    spatial_indices=indices,
-                    temporal_indices=s,
-                    weights=base_weights,
+                try:
+                    idx = [slice(None)] * arr.ndim
+                    idx[self.time_axis] = s
+                    sub = arr[tuple(idx)]
+                    patch = SpatioTemporalPatch(
+                        data=sub,
+                        space=space_anchor,
+                        time=int(time_anchor),
+                        spatial_indices=indices,
+                        temporal_indices=s,
+                        weights=base_weights,
+                    )
+                except Exception as exc:
+                    _dispatch(hooks, "on_error", anchor, exc)
+                    raise
+                _dispatch(
+                    hooks,
+                    "on_patch_done",
+                    anchor,
+                    perf_counter() - start,
+                    _nbytes(patch.data),
                 )
+                yield patch
 
-    def merge(self, patches: Iterable[Any], field: Any) -> list[tuple[Any, Any]]:
+    def merge(
+        self,
+        patches: Iterable[Any],
+        field: Any,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> list[tuple[Any, Any]]:
         """Group patches by spatial anchor and apply the temporal aggregation.
 
         Returns ``[(spatial_anchor, temporal_aggregation_result), …]`` — a
@@ -141,34 +208,63 @@ class SpatioTemporalPatcher:
         Returns:
             ``[(anchor, merged), …]`` in first-seen anchor order.
         """
-        # Group on a hashable surrogate (dict anchors → sorted-item tuples,
-        # arrays → bytes) but keep the original anchor object alongside
-        # the per-group patch list for downstream consumers.
-        by_space: dict[Any, tuple[Any, list[Any]]] = {}
-        for p in patches:
-            key = _hashable(p.space)
-            by_space.setdefault(key, (p.space, []))[1].append(p)
-        # Temporal aggregations read `anchor` + `indices`, but
-        # SpatioTemporalPatch stores them as `time` + `temporal_indices`;
-        # rebox each group as TemporalPatch so TemporalForecast /
-        # TemporalHierarchicalCombine / etc. don't crash on AttributeError.
-        return [
-            (
-                anchor,
-                self.temporal.aggregation.merge(
-                    [
-                        TemporalPatch(
-                            data=p.data,
-                            anchor=p.time,
-                            indices=p.temporal_indices,
-                            weights=p.weights,
-                        )
-                        for p in group
-                    ]
-                ),
-            )
-            for anchor, group in by_space.values()
-        ]
+        hook_list = _as_hooks(hooks)
+        _dispatch(hook_list, "on_merge_start", _len_or_unknown(patches))
+        try:
+            # Group on a hashable surrogate (dict anchors → sorted-item tuples,
+            # arrays → bytes) but keep the original anchor object alongside
+            # the per-group patch list for downstream consumers.
+            by_space: dict[Any, tuple[Any, list[Any]]] = {}
+            for p in patches:
+                key = _hashable(p.space)
+                by_space.setdefault(key, (p.space, []))[1].append(p)
+            # Temporal aggregations read `anchor` + `indices`, but
+            # SpatioTemporalPatch stores them as `time` + `temporal_indices`;
+            # rebox each group as TemporalPatch so TemporalForecast /
+            # TemporalHierarchicalCombine / etc. don't crash on AttributeError.
+            output = [
+                (
+                    anchor,
+                    self.temporal.aggregation.merge(
+                        [
+                            TemporalPatch(
+                                data=p.data,
+                                anchor=p.time,
+                                indices=p.temporal_indices,
+                                weights=p.weights,
+                            )
+                            for p in group
+                        ]
+                    ),
+                )
+                for anchor, group in by_space.values()
+            ]
+        except Exception as exc:
+            _dispatch(hook_list, "on_error", None, exc)
+            raise
+        _dispatch(hook_list, "on_merge_end", _nbytes(output))
+        return output
+
+    def _split_total_hint(self, field: Any) -> int:
+        if self.coupling == "coupled":
+            anchors = getattr(self.spatial.sampler, "anchors_", None)
+            return UNKNOWN_TOTAL if anchors is None else _len_or_unknown(anchors)
+        if self.coupling != "product":
+            return UNKNOWN_TOTAL
+        try:
+            return self.spatial.n_anchors(field)
+        except (
+            AttributeError,
+            NotImplementedError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
+            # Progress totals are best-effort only; if asking the spatial
+            # sampler for a count touches a backend that fails, keep splitting.
+            # These cases cover missing shape metadata, unsupported sampler
+            # counts, and invalid geometry/backend state.
+            return UNKNOWN_TOTAL
 
     def get_config(self) -> dict[str, Any]:
         return {

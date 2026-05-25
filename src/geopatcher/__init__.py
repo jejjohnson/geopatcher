@@ -10,6 +10,7 @@ Public surface re-exports:
   under `geopatcher.fields` and lazy-import their optional extras.
 - Top-level patchers: `SpatialPatcher`, `AsyncSpatialPatcher`,
   `TemporalPatcher`, `SpatioTemporalPatcher`.
+- Observability: `PatcherHook` callback protocol.
 - Spatial axes: re-exported from `geopatcher.spatial`.
 - Temporal axes: re-exported from `geopatcher.time`.
 
@@ -38,6 +39,7 @@ from geopatcher._src.fields import (
     AsyncRasterField,
     RasterField,
 )
+from geopatcher._src.hooks import PatcherHook
 from geopatcher._src.patch import (
     Patch,
     SpatioTemporalPatch,
@@ -130,6 +132,7 @@ __all__ = [
     "GridDomain",
     "Patch",
     "PatchErrorRecord",
+    "PatcherHook",
     "PointDomain",
     "RasterDomain",
     "RasterField",
