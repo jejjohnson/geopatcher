@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +20,14 @@ class PatchJournal:
     committed patch. Re-opening the same path reconstructs the latest status
     for each anchor, allowing ``patcher.split(..., journal=journal)`` to skip
     completed work after a crash.
+
+    Durability: each ``commit`` flushes the Python buffer and calls
+    ``os.fsync`` on the file descriptor before returning. The OS may still
+    reorder the directory entry on a power-loss event, so treat the
+    guarantee as "best-effort durable per row" rather than transactional.
+    Re-running a job after a crash skips anchors that have a row with
+    ``status == "ok"``; partially-written trailing rows are dropped by the
+    JSON-decode guard in ``_load`` with a warning.
     """
 
     uri: str
@@ -43,7 +53,11 @@ class PatchJournal:
         output_uri: str | None = None,
         error: str | None = None,
     ) -> None:
-        """Append a durable status row for ``anchor``."""
+        """Append a durable status row for ``anchor``.
+
+        The row is flushed and ``fsync``-ed before the call returns so a
+        process crash after ``commit()`` returns does not lose the record.
+        """
         row = {
             "anchor": anchor,
             "status": status,
@@ -55,6 +69,12 @@ class PatchJournal:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, sort_keys=True))
             f.write("\n")
+            f.flush()
+            # fsync isn't supported on every filesystem (e.g. some network
+            # mounts, tmpfs in container CI). Fall back to the plain flush
+            # in that case — the row is still in the OS page cache.
+            with contextlib.suppress(OSError):
+                os.fsync(f.fileno())
         self._rows[key] = row
 
     def pending(self, all_anchors: list[Any]) -> list[Any]:

@@ -53,6 +53,40 @@ def test_patch_with_data_preserves_metadata() -> None:
     np.testing.assert_array_equal(updated.data, [[4, 5, 6]])
 
 
+def test_patch_with_data_does_not_mutate_original() -> None:
+    original_data = np.array([[1, 2, 3]])
+    patch = _patch(original_data)
+    updated = patch.with_data(np.array([[4, 5, 6]]))
+    # `with_data` must return a fresh patch, leaving `patch.data` untouched.
+    assert updated is not patch
+    np.testing.assert_array_equal(patch.data, original_data)
+
+
+def test_patch_close_is_idempotent() -> None:
+    released: list[int] = []
+    patch = _patch(np.array([[1, 2, 3]]))
+    patch._release = lambda: released.append(1)
+    patch.close()
+    patch.close()
+    assert released == [1]
+
+
+def test_patch_journal_survives_crash_simulation(tmp_path: Path) -> None:
+    """Re-opening the journal recovers committed rows even without close()."""
+    journal_path = tmp_path / "journal.jsonl"
+    journal = PatchJournal(str(journal_path))
+    journal.commit((1, 1), status="ok", runtime_s=0.1)
+    journal.commit((2, 2), status="ok", runtime_s=0.2)
+    # Drop the in-memory reference without explicit close — fsync should
+    # have made the rows durable.
+    del journal
+
+    reopened = PatchJournal(str(journal_path))
+    assert reopened.has((1, 1))
+    assert reopened.has((2, 2))
+    assert reopened.pending([(1, 1), (2, 2), (3, 3)]) == [(3, 3)]
+
+
 def test_patch_journal_persists_and_split_skips_completed(
     tmp_path: Path, field: RasterField
 ) -> None:
