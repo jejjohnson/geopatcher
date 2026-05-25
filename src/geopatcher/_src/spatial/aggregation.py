@@ -63,6 +63,11 @@ def _domain_array_shape(domain: Any) -> tuple[int, ...]:
     raise TypeError(f"can't infer dense shape from {type(domain).__name__}")
 
 
+def _replace_nan_with_zero(array: np.ndarray) -> np.ndarray:
+    """Replace only NaN with zero; preserve infinities as real values."""
+    return np.where(np.isnan(array), 0.0, array)
+
+
 def _resolve_indices(indices: Any) -> tuple[Any, ...] | None:
     """Map a patch's indices object to a numpy slicer.
 
@@ -109,7 +114,7 @@ class SpatialSum(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
-            acc[sl] += np.asarray(p.data, dtype=np.float64)
+            acc[sl] += _replace_nan_with_zero(np.asarray(p.data, dtype=np.float64))
         return acc
 
 
@@ -126,7 +131,8 @@ class SpatialMax(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
-            acc[sl] = np.maximum(acc[sl], np.asarray(p.data, dtype=np.float64))
+            # fmax ignores NaN to support masked patches.
+            acc[sl] = np.fmax(acc[sl], np.asarray(p.data, dtype=np.float64))
         return acc
 
 
@@ -143,7 +149,8 @@ class SpatialMin(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
-            acc[sl] = np.minimum(acc[sl], np.asarray(p.data, dtype=np.float64))
+            # fmin ignores NaN to support masked patches.
+            acc[sl] = np.fmin(acc[sl], np.asarray(p.data, dtype=np.float64))
         return acc
 
 
@@ -170,9 +177,11 @@ class SpatialWeightedSum(SpatialAggregation):
             w = self.weight_fn(p) if self.weight_fn else p.weights
             data = np.asarray(p.data, dtype=np.float64)
             if w is None:
-                acc[sl] += data
+                acc[sl] += _replace_nan_with_zero(data)
             else:
-                acc[sl] += data * np.asarray(w, dtype=np.float64)
+                acc[sl] += _replace_nan_with_zero(
+                    data * np.asarray(w, dtype=np.float64)
+                )
         return acc
 
 
@@ -195,8 +204,10 @@ class SpatialMean(SpatialAggregation):
             sl = _resolve_indices(p.indices)
             if sl is None:
                 continue
-            total[sl] += np.asarray(p.data, dtype=np.float64)
-            count[sl] += 1.0
+            data = np.asarray(p.data, dtype=np.float64)
+            valid = ~np.isnan(data)
+            total[sl] += _replace_nan_with_zero(data)
+            count[sl] += valid
         with np.errstate(invalid="ignore"):
             return np.where(count > 0, total / count, 0.0)
 
@@ -221,10 +232,14 @@ class SpatialVariance(SpatialAggregation):
             if sl is None:
                 continue
             x = np.asarray(p.data, dtype=np.float64)
-            count[sl] += 1.0
-            delta = x - mean[sl]
-            mean[sl] += delta / count[sl]
-            m2[sl] += delta * (x - mean[sl])
+            valid = ~np.isnan(x)
+            x_clean = _replace_nan_with_zero(x)
+            next_count = count[sl] + valid
+            delta = np.where(valid, x_clean - mean[sl], 0.0)
+            denom = np.where(next_count > 0, next_count, 1.0)
+            mean[sl] += np.where(next_count > 0, delta / denom, 0.0)
+            m2[sl] += np.where(valid, delta * (x_clean - mean[sl]), 0.0)
+            count[sl] = next_count
         with np.errstate(invalid="ignore"):
             return np.where(count > 1, m2 / (count - 1), 0.0)
 
@@ -278,8 +293,9 @@ class SpatialOverlapAdd(SpatialAggregation):
                 else np.ones_like(np.asarray(p.data))
             )
             x = np.asarray(p.data, dtype=np.float64)
-            acc[sl] += x * w
-            wsum[sl] += w
+            valid = ~np.isnan(x)
+            acc[sl] += _replace_nan_with_zero(x) * w * valid
+            wsum[sl] += w * valid
         if not self.normalize_by_window:
             return acc
         with np.errstate(invalid="ignore"):
@@ -344,8 +360,9 @@ class SpatialOverlapAdd(SpatialAggregation):
                 else np.ones_like(np.asarray(p.data), dtype=np.float32)
             )
             x = np.asarray(p.data, dtype=np.float32)
-            rec[sl] = np.asarray(rec[sl]) + x * w
-            wsum[sl] = np.asarray(wsum[sl]) + w
+            valid = ~np.isnan(x)
+            rec[sl] = np.asarray(rec[sl]) + _replace_nan_with_zero(x) * w * valid
+            wsum[sl] = np.asarray(wsum[sl]) + w * valid
         if self.normalize_by_window:
             arr = np.asarray(rec[:])
             wt = np.asarray(wsum[:])
