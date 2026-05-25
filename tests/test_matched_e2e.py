@@ -95,7 +95,14 @@ class _RecordingPrimaryPatcher:
 
 
 class _RecordingAgg:
-    """Aggregation stub — returns ``("merged", name, n_patches)``."""
+    """Aggregation stub — returns ``("merged", name, n_patches)``.
+
+    Carries ``streaming_safe = True`` so the `_warn_if_unsafe_streaming`
+    check that `MatchedSpatialPatcher.merge` applies to each secondary
+    is a no-op for this stub.
+    """
+
+    streaming_safe = True
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -331,6 +338,173 @@ class TestMatchedSpatialPatcherMerge:
 # Integration: a real SpatialPatcher driving a MatchedField + identity coreg
 # (closes the loop with the actual sampler/geometry machinery).
 # ---------------------------------------------------------------------------
+
+
+class TestValidMaskBehavior:
+    """`mfield.valid_mask=True` (the default) must actually produce
+    masks for numeric data, not silently emit None.
+
+    Was P1 review feedback on #49 — the flag was advertised in the
+    public API but had no observable effect.
+    """
+
+    def test_valid_mask_true_emits_isfinite(self) -> None:
+        import numpy as np
+
+        class _ArrField:
+            """Returns a 4x4 array with one NaN."""
+
+            @property
+            def domain(self) -> Any:
+                return _StubDomain()
+
+            def select(self, indexer: Any) -> Any:
+                arr = np.ones((4, 4), dtype=np.float32)
+                arr[0, 0] = np.nan
+                return arr
+
+            def with_data(self, array: Any) -> Any:
+                return array
+
+        mf = MatchedField(primary=_ArrField())
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            )  # type: ignore[arg-type]
+        )
+        mp = next(iter(msp.split(mf)))
+        assert mp.valid_mask is not None
+        assert PRIMARY_KEY in mp.valid_mask
+        # The NaN position should be False; the rest True.
+        np.testing.assert_array_equal(mp.valid_mask[PRIMARY_KEY][0, 0], False)
+        assert mp.valid_mask[PRIMARY_KEY][1:].all()
+
+    def test_valid_mask_false_emits_none(self) -> None:
+        mf = MatchedField(primary=_StubField("p"), valid_mask=False)
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            )  # type: ignore[arg-type]
+        )
+        mp = next(iter(msp.split(mf)))
+        assert mp.valid_mask is None
+
+    def test_valid_mask_true_with_non_array_data_emits_none(self) -> None:
+        # `_StubField.select` returns strings; mask computation
+        # bails out and the dict ends up empty → mp.valid_mask=None.
+        mf = MatchedField(primary=_StubField("p"), valid_mask=True)
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            )  # type: ignore[arg-type]
+        )
+        mp = next(iter(msp.split(mf)))
+        assert mp.valid_mask is None
+
+
+class TestUnknownAggregatorNamesRejected:
+    """Typo guard: a `secondary_aggregators` key that doesn't appear
+    in `mfield.secondaries` raises rather than silently skipping.
+    """
+
+    def _build(self, *, agg_name: str) -> tuple[MatchedSpatialPatcher, MatchedField]:
+        mf = MatchedField(
+            primary=_StubField("p"),
+            secondaries={"s2": _StubField("s2")},
+            coreg={"s2": lambda raw, primary: raw},
+        )
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            ),  # type: ignore[arg-type]
+            secondary_aggregators={agg_name: _RecordingAgg("typo")},  # type: ignore[dict-item]
+        )
+        return msp, mf
+
+    def test_split_rejects_unknown_aggregator_name(self) -> None:
+        msp, mf = self._build(agg_name="s22")  # typo of "s2"
+        with pytest.raises(ValueError, match=r"not in mfield\.secondaries"):
+            list(msp.split(mf))
+
+    def test_merge_rejects_unknown_aggregator_name(self) -> None:
+        # Even if the user managed to build a MatchedPatch by hand,
+        # `merge` re-validates.
+        msp, mf = self._build(agg_name="s22")
+        # Build a single matched patch manually to bypass split's check.
+        from geopatcher._src.patch import Patch
+
+        mp = MatchedPatch(
+            anchor=(0, 0),
+            members={PRIMARY_KEY: Patch(data="x", anchor=(0, 0), indices=None)},
+        )
+        with pytest.raises(ValueError, match=r"not in mfield\.secondaries"):
+            msp.merge([mp], mf)
+
+
+class TestStreamingSafetyWarnedOnSecondaries:
+    """Secondary aggregators go through the same
+    `_warn_if_unsafe_streaming` check as the primary, so strict-mode
+    surfaces non-streaming secondaries the same way.
+    """
+
+    def test_unsafe_secondary_aggregator_warns_in_strict_mode(self) -> None:
+        from geopatcher._src.config import set_strict
+
+        class _UnsafeAgg(_RecordingAgg):
+            # Same as _RecordingAgg but with the streaming flag flipped,
+            # matching aggregations like SpatialMedian / SpatialLearned
+            # that materialise the full patch set in RAM.
+            streaming_safe = False
+
+        mf = MatchedField(
+            primary=_StubField("p"),
+            secondaries={"s2": _StubField("s2")},
+            coreg={"s2": lambda raw, primary: raw},
+        )
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            ),  # type: ignore[arg-type]
+            secondary_aggregators={"s2": _UnsafeAgg("s2_unsafe")},  # type: ignore[dict-item]
+        )
+        # Strict mode → unsafe aggregator on the secondary path must
+        # raise, same contract the primary patcher provides.
+        token = set_strict(True)
+        try:
+            with pytest.raises(RuntimeError, match="streaming_safe = False"):
+                msp.merge([], mf)
+        finally:
+            set_strict(token)
+
+    def test_unsafe_secondary_aggregator_warns_in_lax_mode(self) -> None:
+        import warnings
+
+        from geopatcher._src.config import set_strict
+
+        class _UnsafeAgg(_RecordingAgg):
+            streaming_safe = False
+
+        mf = MatchedField(
+            primary=_StubField("p"),
+            secondaries={"s2": _StubField("s2")},
+            coreg={"s2": lambda raw, primary: raw},
+        )
+        msp = MatchedSpatialPatcher(
+            primary=_RecordingPrimaryPatcher(
+                anchors=[(0, 0)], aggregation=_RecordingAgg("agg")
+            ),  # type: ignore[arg-type]
+            secondary_aggregators={"s2": _UnsafeAgg("s2_unsafe")},  # type: ignore[dict-item]
+        )
+        # Non-strict mode: warning, no raise.
+        token = set_strict(False)
+        try:
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always")
+                out = msp.merge([], mf)
+            assert any("streaming_safe = False" in str(w.message) for w in captured)
+            assert "s2" in out
+        finally:
+            set_strict(token)
 
 
 class TestRealSpatialPatcherIntegration:

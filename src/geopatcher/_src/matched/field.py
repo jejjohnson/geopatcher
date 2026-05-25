@@ -19,11 +19,16 @@ It satisfies the existing `Field` Protocol by exposing the primary's
    secondary's coreg callable,
 4. returns a ``dict[str, data]`` keyed by source name (primary first).
 
-Because it *is* a `Field`, every existing `SpatialPatcher` /
-geometry / sampler / window / aggregation works on it unchanged.
-The per-source data dict travels through the outer ``Patch.data``
-field; `MatchedSpatialPatcher.split` unpacks it into a
-`MatchedPatch` for matched-aware consumers.
+Because it *is* a `Field`, every existing `SpatialPatcher`
+sampler / geometry / window walks a `MatchedField` unchanged. The
+per-source data dict travels through the outer ``Patch.data``
+field on each yielded patch. **Aggregations, however, expect
+``Patch.data`` to be a numeric array** (``Sum`` / ``Mean`` /
+``OverlapAdd`` etc. all call ``np.asarray(p.data)``), so a plain
+``SpatialPatcher.merge`` will NOT work on the dict-shaped data
+this Field produces. Route merge through
+``MatchedSpatialPatcher.merge``, which fans out per-source
+aggregation across the matched patches.
 """
 
 from __future__ import annotations
