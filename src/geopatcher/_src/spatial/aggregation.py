@@ -252,6 +252,56 @@ class SpatialVariance(SpatialAggregation):
 
 
 @dataclass(eq=False)
+class SpatialMeanStd(SpatialAggregation):
+    """Global mean and sample standard deviation across patch data."""
+
+    streaming_safe: ClassVar[bool] = True
+
+    def merge(self, patches: Iterable[Any], domain: Any) -> dict[str, float]:
+        count = 0
+        mean = 0.0
+        m2 = 0.0
+        for p in patches:
+            x = np.asarray(p.data, dtype=np.float64).reshape(-1)
+            if x.size == 0:
+                continue
+            batch_count = int(x.size)
+            batch_mean = float(np.mean(x))
+            batch_m2 = float(np.sum((x - batch_mean) ** 2))
+            next_count = count + batch_count
+            delta = batch_mean - mean
+            m2 += batch_m2 + delta * delta * count * batch_count / next_count
+            mean += delta * batch_count / next_count
+            count = next_count
+        if count == 0:
+            raise ValueError("SpatialMeanStd requires at least one value")
+        var = m2 / (count - 1) if count > 1 else 0.0
+        return {"mean": mean, "std": float(np.sqrt(var))}
+
+
+@dataclass(eq=False)
+class SpatialMinMax(SpatialAggregation):
+    """Global minimum and maximum across patch data."""
+
+    streaming_safe: ClassVar[bool] = True
+
+    def merge(self, patches: Iterable[Any], domain: Any) -> dict[str, float]:
+        min_value = np.inf
+        max_value = -np.inf
+        seen = False
+        for p in patches:
+            x = np.asarray(p.data, dtype=np.float64)
+            if x.size == 0:
+                continue
+            min_value = min(min_value, float(np.min(x)))
+            max_value = max(max_value, float(np.max(x)))
+            seen = True
+        if not seen:
+            raise ValueError("SpatialMinMax requires at least one value")
+        return {"min": min_value, "max": max_value}
+
+
+@dataclass(eq=False)
 class SpatialOverlapAdd(SpatialAggregation):
     """SpatialWindow-weighted overlap-add — the canonical chip-stitching aggregator.
 
