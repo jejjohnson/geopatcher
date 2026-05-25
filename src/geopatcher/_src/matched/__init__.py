@@ -20,12 +20,24 @@ See `docs/decisions.md` (ADR-003) for the locked-in design choices.
 from __future__ import annotations
 
 from geopatcher._src.matched.field import MatchedField
-from geopatcher._src.matched.patch import MatchedPatch
-from geopatcher._src.matched.patcher import MatchedSpatialPatcher
+from geopatcher._src.matched.patch import (
+    MatchedPatch,
+    MatchedSpatioTemporalPatch,
+    MatchedTemporalPatch,
+)
+from geopatcher._src.matched.patcher import (
+    MatchedSpatialPatcher,
+    MatchedSpatioTemporalPatcher,
+    MatchedTemporalPatcher,
+)
 
 
 __all__ = [
     "MatchedField",
     "MatchedPatch",
     "MatchedSpatialPatcher",
+    "MatchedSpatioTemporalPatch",
+    "MatchedSpatioTemporalPatcher",
+    "MatchedTemporalPatch",
+    "MatchedTemporalPatcher",
 ]
