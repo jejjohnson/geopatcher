@@ -70,23 +70,40 @@ def parallel_map(
     total = len(patches)
     done = 0
 
+    def _submit_patch(patch: Patch) -> Patch:
+        # ``SpatialPatcher.split`` may attach a non-picklable ``_release``
+        # backpressure closure; detach it for transport and let the caller
+        # invoke it once the worker returns.
+        if backend == "process" and getattr(patch, "_release", None) is not None:
+            return replace(patch, _release=None)
+        return patch
+
     with executor_cls(max_workers=n_workers) as executor:
         futures = {
-            executor.submit(_apply_operator, i, patch, operator): i
+            executor.submit(_apply_operator, i, _submit_patch(patch), operator): (
+                i,
+                patch,
+            )
             for i, patch in enumerate(patches)
         }
         for future in as_completed(futures):
+            index, original = futures[future]
             try:
                 results.append(future.result())
             except Exception as exc:
                 if on_error == "raise":
                     raise
                 warnings.warn(
-                    f"parallel_map skipped patch {futures[future]} after operator "
-                    f"error: {exc}",
+                    f"parallel_map skipped patch {index} after operator error: {exc}",
                     RuntimeWarning,
                     stacklevel=2,
                 )
+            finally:
+                # Use ``Patch.close`` so the release closure runs exactly once,
+                # whether the worker raised or returned successfully.
+                close = getattr(original, "close", None)
+                if callable(close):
+                    close()
             done += 1
             if show_progress:
                 print(f"\r{done}/{total}", end="", file=sys.stderr)
