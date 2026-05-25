@@ -14,6 +14,10 @@ from geopatcher._src.matched import (
     MatchedField,
     MatchedPatch,
     MatchedSpatialPatcher,
+    MatchedSpatioTemporalPatch,
+    MatchedSpatioTemporalPatcher,
+    MatchedTemporalPatch,
+    MatchedTemporalPatcher,
 )
 
 
@@ -21,4 +25,8 @@ __all__ = [
     "MatchedField",
     "MatchedPatch",
     "MatchedSpatialPatcher",
+    "MatchedSpatioTemporalPatch",
+    "MatchedSpatioTemporalPatcher",
+    "MatchedTemporalPatch",
+    "MatchedTemporalPatcher",
 ]
