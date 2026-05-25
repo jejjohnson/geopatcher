@@ -6,7 +6,7 @@ Public surface re-exports:
 - Protocols: `Field`, `AsyncField`, `Domain`.
 - Concrete domains: `RasterDomain`, `GridDomain`, `VectorDomain`, `PointDomain`.
 - Field adapters: `RasterField`, `AsyncRasterField`. Non-raster adapters
-  (`XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`) live
+  (`XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`, `DaskField`) live
   under `geopatcher.fields` and lazy-import their optional extras.
 - Top-level patchers: `SpatialPatcher`, `AsyncSpatialPatcher`,
   `TemporalPatcher`, `SpatioTemporalPatcher`.
@@ -215,6 +215,12 @@ __all__ = [
 # `geopatcher.fields` submodule's own lazy loader.
 def __getattr__(name: str):
     """Lazy-load optional Field adapters from `geopatcher.fields`."""
-    if name in {"XarrayField", "GeoPandasField", "XvecField", "RioXarrayField"}:
+    if name in {
+        "XarrayField",
+        "GeoPandasField",
+        "XvecField",
+        "RioXarrayField",
+        "DaskField",
+    }:
         return getattr(fields, name)
     raise AttributeError(name)

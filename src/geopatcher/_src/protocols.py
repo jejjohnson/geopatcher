@@ -62,12 +62,16 @@ class AsyncField(Protocol):
     """Async mirror of `Field` — concurrent `select` over remote tiles.
 
     `AsyncSpatialPatcher.split` consumes this Protocol; the sync surface
-    is otherwise identical.
+    is otherwise identical. `aselect` is the explicit async spelling used
+    by new code; `select` is kept for compatibility with the original
+    async patcher API and may delegate to `aselect`.
     """
 
     @property
     def domain(self) -> Domain: ...
 
     async def select(self, indexer: Any) -> Any: ...
+
+    async def aselect(self, indexer: Any) -> Any: ...
 
     def with_data(self, array: Any) -> Any: ...

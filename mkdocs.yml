@@ -45,6 +45,7 @@ nav:
   - Concepts:
       - Patching: patching.md
       - Observability hooks: observability.md
+      - Async and prefetch: patching/async-prefetch.md
       - Design decisions: decisions.md
   - Tutorials:
       - Patching intro: notebooks/patching_intro.ipynb
