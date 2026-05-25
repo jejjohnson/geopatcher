@@ -164,6 +164,86 @@ Three options were on the table:
 
 ---
 
+## ADR-003 — `MatchedField` is a composite `Field`, not a new top-level type
+
+**Decision.** Co-located patching across N sources lives in
+`geopatcher.matched.MatchedField`, which **satisfies the existing
+`Field` Protocol** via its primary's `domain`. Concretely:
+
+- `MatchedField.primary` is a regular `Field`; its CRS / bounds /
+  shape define the anchor space.
+- `MatchedField.secondaries: Mapping[str, Field]` carries the
+  matched sources keyed by name.
+- `MatchedField.coreg: Mapping[str, Callable]` carries one
+  coregistration callable per secondary. Type is the broad
+  `Callable[[Any, Any], Any]`, but the **recommended** value is a
+  `pipekit.Operator` from `geotoolz.geom.coregister.*` so the
+  alignment step round-trips through YAML.
+- `MatchedField.select(indexer)` returns a `MatchedPatch`
+  (sibling carrier — not a subclass of `Patch`) holding one patch
+  per source under `members[name]`, plus optional per-source
+  `valid_mask` for partial coverage.
+
+**Context.** The cross-package query→matchup→patch design
+(`docs/design/query-matchup.md`) introduces matchups between LEO,
+GEO, vector, and point-cloud sources. The patching side has to read
+co-located neighborhoods across these heterogeneous sources without
+duplicating coregistration logic (which lives in `geotoolz`) and
+without forcing geopatcher's framework-free core to depend on
+`pipekit`.
+
+The composite-Field approach satisfies all three constraints: every
+existing sampler, geometry, window, and aggregation works on a
+`MatchedField` unchanged; the heavy alignment work lives in
+`geotoolz.geom.coregister.*` `pipekit.Operator`s; geopatcher's only
+new typing dependency is the standard-library `Callable` (since
+`pipekit.Operator` IS callable).
+
+**Consequences.**
+
+- A user with no matchup needs continues to write `SpatialPatcher`
+  pipelines against a `Field` — nothing changes.
+- A user with matchups writes `MatchedField(primary, secondaries,
+  coreg)` and **passes that to the same `SpatialPatcher` they
+  already use**. The `split()` iterator yields `MatchedPatch`es
+  instead of `Patch`es; downstream code branches once on
+  `isinstance(p, MatchedPatch)` if it wants per-source access.
+- Per-source merge needs a new wrapper (`MatchedSpatialPatcher`)
+  because the existing `SpatialPatcher.merge` returns one `Field`.
+  This is the *only* API shape change introduced — and it lives in
+  a new class so backwards compatibility is preserved.
+- `MatchedPatch` is intentionally **not** a subclass of `Patch`:
+  `Patch[AnchorT, IndicesT, DataT]` is parameterised over a single
+  data type, but `MatchedPatch` holds a heterogeneous dict of
+  patches whose types differ across keys. Consumers that don't
+  care about matchups continue to type against plain `Patch`;
+  consumers that do explicitly type against `MatchedPatch`.
+
+**Alternatives considered.**
+
+- *A dedicated `CoregistrationStrategy` ABC in geopatcher.* Would
+  duplicate the operators already present in
+  `geotoolz.geom.coregister`, force geopatcher to import or
+  reimplement reprojection / rasterization / KDTree binning, and
+  break the "core is numpy + scipy only" invariant. Rejected;
+  geotoolz owns the coreg logic.
+- *Make `MatchedPatch` a subclass of `Patch`.* Liskov-substitution
+  surprises: a consumer that types `Patch` and unpacks `data`,
+  `anchor`, `indices`, `weights` would break on a `MatchedPatch`
+  because there is no single `data`. Sibling carrier sidesteps the
+  whole question.
+- *Type `coreg` as `Mapping[str, pipekit.Operator]`.* Imports
+  pipekit into geopatcher's runtime, breaking the framework-free
+  core. Rejected; the broader `Callable` is enough.
+  `pipekit.Operator` users are still first-class — they're just
+  not the only allowed value.
+- *A separate `MatchedPatcher` family alongside `SpatialPatcher` /
+  `TemporalPatcher`.* Would mean rewriting samplers, geometries,
+  windows, and aggregations to accept matched fields. The composite
+  approach gets the same surface for free.
+
+---
+
 ## How to add a decision
 
 1. Open a PR with the proposed addition. The PR description argues the
