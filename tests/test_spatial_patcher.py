@@ -220,6 +220,28 @@ class TestSplit:
                 on_error="ignore",  # type: ignore[arg-type]
             )
 
+    def test_capture_traceback_false_skips_formatted_traceback(
+        self, field: RasterField
+    ) -> None:
+        """`capture_traceback=False` keeps `errors` lean for bulk skip workloads."""
+        flaky = FlakyRasterField(field, failures_by_anchor={(0, 16): 1})
+        patcher = SpatialPatcher(
+            geometry=SpatialRectangular(size=(16, 16)),
+            sampler=SpatialRegularStride(step=16),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+            on_error="skip",
+            capture_traceback=False,
+        )
+
+        list(patcher.split(flaky))
+
+        assert len(patcher.errors) == 1
+        assert patcher.errors[0].traceback == ""
+        # Still captures kind / message so callers can inspect failure modes.
+        assert patcher.errors[0].kind == "OSError"
+        assert "flaky read" in patcher.errors[0].message
+
 
 class TestSplitMergeRoundtrip:
     def test_identity_with_boxcar_no_overlap(self, field: RasterField) -> None:

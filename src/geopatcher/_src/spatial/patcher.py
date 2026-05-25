@@ -74,6 +74,11 @@ class SpatialPatcher:
         retry_on: Exception classes or class names that should be retried.
             Defaults to I/O-shaped failures (`OSError`, `TimeoutError`) so
             programmer errors are not retried unless explicitly requested.
+        capture_traceback: If ``True`` (default), each `PatchErrorRecord`
+            includes a formatted traceback. Set to ``False`` to skip
+            formatting — useful for high-volume ``"skip"`` workloads
+            where thousands of expected failures would otherwise inflate
+            ``errors`` with megabytes of formatted frames.
 
     Examples:
         Sliding-window inference over a raster::
@@ -96,6 +101,7 @@ class SpatialPatcher:
     on_error: OnErrorPolicy = "raise"
     max_retries: int = 0
     retry_on: tuple[type[BaseException] | str, ...] = (OSError, TimeoutError)
+    capture_traceback: bool = True
     errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -118,6 +124,7 @@ class SpatialPatcher:
                 max_retries=self.max_retries,
                 retry_on=self.retry_on,
                 errors=self.errors,
+                capture_traceback=self.capture_traceback,
             )
             if patch is not None:
                 yield patch
@@ -207,6 +214,7 @@ class SpatialPatcher:
             "retry_on": [
                 exc if isinstance(exc, str) else exc.__name__ for exc in self.retry_on
             ],
+            "capture_traceback": self.capture_traceback,
         }
 
 
@@ -216,6 +224,11 @@ class AsyncSpatialPatcher:
 
     `split` is an ``async for``-able iterator. Useful with
     `AsyncGeoTIFFReader` for high-concurrency per-tile fan-out.
+
+    The `on_error` / `max_retries` / `retry_on` / `capture_traceback`
+    knobs mirror `SpatialPatcher`. Iteration is serialized (one
+    ``await`` per anchor), so the `errors` accumulator is safe to read
+    from the same coroutine without external locking.
     """
 
     geometry: SpatialGeometry
@@ -225,6 +238,7 @@ class AsyncSpatialPatcher:
     on_error: OnErrorPolicy = "raise"
     max_retries: int = 0
     retry_on: tuple[type[BaseException] | str, ...] = (OSError, TimeoutError)
+    capture_traceback: bool = True
     errors: list[PatchErrorRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -246,6 +260,7 @@ class AsyncSpatialPatcher:
                 max_retries=self.max_retries,
                 retry_on=self.retry_on,
                 errors=self.errors,
+                capture_traceback=self.capture_traceback,
             )
             if patch is not None:
                 yield patch
@@ -319,6 +334,7 @@ def _build_patch_with_policy(
     max_retries: int,
     retry_on: tuple[type[BaseException] | str, ...],
     errors: list[PatchErrorRecord],
+    capture_traceback: bool = True,
 ) -> Patch | None:
     retries = max_retries if on_error == "retry" else 0
     indices = geometry.neighborhood(domain, anchor)
@@ -333,7 +349,7 @@ def _build_patch_with_policy(
                 raise
             if on_error == "raise":
                 raise
-            _record_patch_error(errors, anchor, exc, retry_count)
+            _record_patch_error(errors, anchor, exc, retry_count, capture_traceback)
             if on_error == "mask":
                 return _build_mask_patch(
                     domain, anchor, indices, base_weights, boundary
@@ -359,6 +375,7 @@ async def _build_patch_async_with_policy(
     max_retries: int,
     retry_on: tuple[type[BaseException] | str, ...],
     errors: list[PatchErrorRecord],
+    capture_traceback: bool = True,
 ) -> Patch | None:
     retries = max_retries if on_error == "retry" else 0
     indices = geometry.neighborhood(domain, anchor)
@@ -373,7 +390,7 @@ async def _build_patch_async_with_policy(
                 raise
             if on_error == "raise":
                 raise
-            _record_patch_error(errors, anchor, exc, retry_count)
+            _record_patch_error(errors, anchor, exc, retry_count, capture_traceback)
             if on_error == "mask":
                 return _build_mask_patch(
                     domain, anchor, indices, base_weights, boundary
@@ -392,13 +409,15 @@ def _record_patch_error(
     anchor: Any,
     exc: Exception,
     retry_count: int,
+    capture_traceback: bool = True,
 ) -> None:
+    tb = "".join(traceback.format_exception(exc)) if capture_traceback else ""
     errors.append(
         PatchErrorRecord(
             anchor=anchor,
             kind=type(exc).__name__,
             message=str(exc),
-            traceback="".join(traceback.format_exception(exc)),
+            traceback=tb,
             retry_count=retry_count,
         )
     )
