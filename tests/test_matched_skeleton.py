@@ -93,10 +93,13 @@ class TestMatchedField:
                 coreg={"extra": lambda raw, primary: raw},
             )
 
-    def test_select_not_implemented(self) -> None:
+    def test_select_returns_primary_only_when_no_secondaries(self) -> None:
+        # `select` is implemented; behaviour coverage lives in
+        # tests/test_matched_e2e.py. Smoke-check the primary-only
+        # path here for the skeleton's regression-net role.
         mf = MatchedField(primary=_StubField("p"))
-        with pytest.raises(NotImplementedError):
-            mf.select(object())
+        result = mf.select("idx")
+        assert result == {"primary": "p@idx"}
 
     def test_with_data_forwards(self) -> None:
         # `with_data` is implemented (forwards to primary) so existing
@@ -189,14 +192,5 @@ class TestMatchedSpatialPatcher:
         msp = MatchedSpatialPatcher(primary=object())  # type: ignore[arg-type]
         assert msp.secondary_aggregators == {}
 
-    def test_split_not_implemented(self) -> None:
-        msp = MatchedSpatialPatcher(primary=object())  # type: ignore[arg-type]
-        mf = MatchedField(primary=_StubField("p"))
-        with pytest.raises(NotImplementedError):
-            list(msp.split(mf))
-
-    def test_merge_not_implemented(self) -> None:
-        msp = MatchedSpatialPatcher(primary=object())  # type: ignore[arg-type]
-        mf = MatchedField(primary=_StubField("p"))
-        with pytest.raises(NotImplementedError):
-            msp.merge([], mf)
+    # `split` and `merge` are implemented; behaviour coverage lives
+    # in tests/test_matched_e2e.py.
