@@ -13,8 +13,7 @@ See ``design.md`` §1 for the four-axis framework.
 from __future__ import annotations
 
 import traceback
-from asyncio import BoundedSemaphore as AsyncBoundedSemaphore
-from asyncio import to_thread
+from asyncio import BoundedSemaphore as AsyncBoundedSemaphore, to_thread
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from threading import BoundedSemaphore, Condition
