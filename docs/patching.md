@@ -141,11 +141,18 @@ canonical streaming-safe member is `SpatialOverlapAdd`, which accepts
 `streaming=True, target_path=...` to accumulate into an on-disk
 [zarr](https://zarr.dev) store instead of RAM. The exact streaming family
 (`Sum`, `Mean`, `Variance`, `OverlapAdd`, `WeightedSum`, `InvVarWeightedMean`,
-`HardVote`, `SoftVote`) is fully implemented; the approximate (sketch)
+`HardVote`, `SoftVote`) is fully implemented. The approximate sketch
 family (`ApproxQuantile`, `ApproxCardinality`, `ApproxMode`,
-`StreamingHistogram`, `Reservoir`) ships as stub classes that raise
-`NotImplementedError` with a pointer at the streamable substitute — they
-land in v0.2.
+`StreamingHistogram`, `Reservoir`) provides global streaming summaries for
+operational-scale jobs that need bounded reducer state rather than a full
+materialised field.
+
+For resumable local jobs, create a `PatchJournal(path)` and pass it to
+`patcher.split(field, journal=journal)`. Anchors with successful journal rows
+are skipped on restart. Iterator backpressure is available through
+`max_in_flight` or `max_in_flight_bytes`; close patches explicitly (or use them
+as context managers) when you want to release a slot before the object is
+garbage-collected.
 
 ## Optional extras
 
@@ -167,8 +174,6 @@ the backend library is missing.
 ## Where the framework draws the line
 
 - **Mesh / `uxarray`** (`UXarrayField`) is deferred to v0.2.
-- **Sketch aggregations** ship as stubs only — see the substitute table in
-  the docstrings.
 - **Hierarchical Patcher-of-Patchers** is supported as a *recipe* on top of
   the framework rather than a dedicated class. See the streaming tutorial
   notebook.

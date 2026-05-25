@@ -9,6 +9,10 @@ walkthrough see [Patching](../patching.md).
 ::: geopatcher._src.patch.TemporalPatch
 ::: geopatcher._src.patch.SpatioTemporalPatch
 
+## Operational scale
+
+::: geopatcher._src.journal.PatchJournal
+
 ## Protocols
 
 ::: geopatcher._src.hooks.PatcherHook
@@ -87,7 +91,7 @@ from geopatcher.fields import XarrayField, GeoPandasField, XvecField
 ::: geopatcher._src.spatial.aggregation.SpatialMode
 ::: geopatcher._src.spatial.aggregation.SpatialLearned
 
-#### Approximate (sketches) — v0.2 stubs
+#### Approximate (sketches)
 
 ::: geopatcher._src.spatial.aggregation.SpatialApproxQuantile
 ::: geopatcher._src.spatial.aggregation.SpatialApproxCardinality

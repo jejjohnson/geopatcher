@@ -109,9 +109,9 @@ def test_temporal_get_config_is_dict(op) -> None:
     assert isinstance(cfg, dict)
 
 
-class TestApproxStubsRaise:
+class TestApproxSketches:
     @pytest.mark.parametrize(
-        "stub_cls",
+        "sketch_cls",
         [
             SpatialApproxQuantile,
             SpatialApproxCardinality,
@@ -120,10 +120,9 @@ class TestApproxStubsRaise:
             SpatialReservoir,
         ],
     )
-    def test_merge_raises_not_implemented(self, stub_cls) -> None:
-        stub = stub_cls()
-        with pytest.raises(NotImplementedError, match=r"reserved for v0\.2"):
-            stub.merge([], None)
+    def test_get_config_is_dict(self, sketch_cls) -> None:
+        sketch = sketch_cls()
+        assert isinstance(sketch.get_config(), dict)
 
 
 class TestCustomForbidsInYaml:

@@ -40,6 +40,7 @@ from geopatcher._src.fields import (
     RasterField,
 )
 from geopatcher._src.hooks import PatcherHook
+from geopatcher._src.journal import PatchJournal
 from geopatcher._src.patch import (
     Patch,
     SpatioTemporalPatch,
@@ -132,6 +133,7 @@ __all__ = [
     "GridDomain",
     "Patch",
     "PatchErrorRecord",
+    "PatchJournal",
     "PatcherHook",
     "PointDomain",
     "RasterDomain",

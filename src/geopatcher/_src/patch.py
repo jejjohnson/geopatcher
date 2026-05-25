@@ -13,7 +13,8 @@ See `examples.md` §Summary for the table.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -38,6 +39,26 @@ class Patch[AnchorT, IndicesT, DataT]:
     anchor: AnchorT
     indices: IndicesT
     weights: Any | None = None
+    _release: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+
+    def with_data[NewDataT](self, data: NewDataT) -> Patch[AnchorT, IndicesT, NewDataT]:
+        """Return a data-replaced copy that does not own this patch's release slot."""
+        return replace(self, data=data, _release=None)
+
+    def close(self) -> None:
+        """Release any iterator backpressure slot held by this patch."""
+        release, self._release = self._release, None
+        if release is not None:
+            release()
+
+    def __enter__(self) -> Patch[AnchorT, IndicesT, DataT]:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
 
 
 @dataclass(eq=False)
@@ -51,6 +72,28 @@ class TemporalPatch[AnchorT, IndicesT, DataT]:
     anchor: AnchorT
     indices: IndicesT
     weights: Any | None = None
+    _release: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+
+    def with_data[NewDataT](
+        self, data: NewDataT
+    ) -> TemporalPatch[AnchorT, IndicesT, NewDataT]:
+        """Return a data-replaced copy that does not own this patch's release slot."""
+        return replace(self, data=data, _release=None)
+
+    def close(self) -> None:
+        """Release any iterator backpressure slot held by this patch."""
+        release, self._release = self._release, None
+        if release is not None:
+            release()
+
+    def __enter__(self) -> TemporalPatch[AnchorT, IndicesT, DataT]:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
 
 
 @dataclass(eq=False)
@@ -69,3 +112,23 @@ class SpatioTemporalPatch:
     spatial_indices: Any = None
     temporal_indices: Any = None
     weights: Any = field(default=None)
+    _release: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+
+    def with_data(self, data: Any) -> SpatioTemporalPatch:
+        """Return a data-replaced copy that does not own this patch's release slot."""
+        return replace(self, data=data, _release=None)
+
+    def close(self) -> None:
+        """Release any iterator backpressure slot held by this patch."""
+        release, self._release = self._release, None
+        if release is not None:
+            release()
+
+    def __enter__(self) -> SpatioTemporalPatch:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
