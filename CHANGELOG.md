@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/jejjohnson/geopatcher/compare/v0.0.3...v0.0.4) (2026-05-26)
+
+
+### Features
+
+* **fields:** obstore COG field + batched parallel_map via select_many duck-typing ([#53](https://github.com/jejjohnson/geopatcher/issues/53)) ([1d12ce2](https://github.com/jejjohnson/geopatcher/commit/1d12ce27c58b0d25ef05c443b1d9839bdf4a5ee2))
+
 ## [0.0.3](https://github.com/jejjohnson/geopatcher/compare/v0.0.2...v0.0.3) (2026-05-25)
 
 
