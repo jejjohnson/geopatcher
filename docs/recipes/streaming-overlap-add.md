@@ -175,4 +175,4 @@ size.
 
 - [`recipes/on-error-policies.md`](on-error-policies.md) — pair streaming with `on_error="skip"` for resilient bulk inference.
 - [`recipes/journal-and-resume.md`](journal-and-resume.md) — make the streaming job restartable after a crash.
-- [`docs/notebooks/patching_streaming.ipynb`](../notebooks/patching_streaming.ipynb) — runnable version with real GeoTIFFs.
+- [Streaming reconstruction notebook](https://github.com/jejjohnson/research_notebook/blob/main/projects/geostack/notebooks/patching/06_streaming.ipynb) — runnable walk-through with the zarr accumulator + real GeoTIFFs (lives in the research_notebook geostack project).

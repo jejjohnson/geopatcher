@@ -75,9 +75,14 @@ plug it into a `pipekit.Sequential` pipeline through the
   Lake Tahoe Sentinel-2 scene.
 - **[Recipes](recipes/streaming-overlap-add.md)** — bounded-memory
   pipelines, on-error policies, PatchJournal resume.
-- **[Tutorials](notebooks/patcher_lake_tahoe.ipynb)** — the patcher
-  slice of the Lake Tahoe scenario plus the nine existing intro /
-  samplers / geometries / backends / time / streaming notebooks.
+- **[Tutorial](notebooks/patcher_lake_tahoe.ipynb)** — the patcher
+  slice of the Lake Tahoe scenario; this PR's canonical worked example.
+- **Extended examples ↗** — the deep dives on geometries, samplers,
+  Field backends, time, streaming, and framework recipes
+  (Grain / JAX vmap / torch Dataset) live in
+  [`research_notebook/projects/geostack/notebooks/patching`](https://github.com/jejjohnson/research_notebook/tree/main/projects/geostack/notebooks/patching).
+  They execute against real Sentinel-2 / Copernicus DEM / GBIF data
+  via a shared loader module; this repo's docs reference them by name.
 - **[Design decisions](decisions.md)** — locked-in ADRs.
 - **[API reference](api/reference.md)** — generated from docstrings.
 
