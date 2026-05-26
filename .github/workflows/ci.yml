@@ -21,10 +21,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        # `--extra streaming` pulls in zarr so the
-        # tests/test_streaming_golden.py suite actually runs in CI
-        # instead of being silently skipped by pytest.importorskip.
-        run: uv sync --group dev --extra streaming
+        # Extras pull in optional-suite dependencies so their tests
+        # actually run in CI instead of being silently skipped by
+        # ``pytest.importorskip``:
+        #   - ``streaming`` → zarr → tests/test_streaming_golden.py
+        #   - ``obstore-cog`` → obstore + async-tiff → tests/test_obstore_cog_field.py
+        run: uv sync --group dev --extra streaming --extra obstore-cog
       - name: Run tests with coverage
         run: uv run pytest -v
       - name: Upload coverage report
