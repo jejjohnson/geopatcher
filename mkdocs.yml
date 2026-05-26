@@ -42,12 +42,14 @@ plugins:
 
 nav:
   - Home: index.md
-  - Concepts:
-      - Patching: patching.md
-      - Observability hooks: observability.md
-      - Async and prefetch: patching/async-prefetch.md
-      - Design decisions: decisions.md
+  - Concepts: concepts.md
+  - Quickstart: quickstart.md
+  - Recipes:
+      - Streaming overlap-add: recipes/streaming-overlap-add.md
+      - On-error policies: recipes/on-error-policies.md
+      - Journal & resume: recipes/journal-and-resume.md
   - Tutorials:
+      - Patching Sentinel-2 (Lake Tahoe): notebooks/patcher_lake_tahoe.ipynb
       - Patching intro: notebooks/patching_intro.ipynb
       - Patching samplers: notebooks/patching_sampling.ipynb
       - Patching geometries: notebooks/patching_geometries.ipynb
@@ -55,11 +57,15 @@ nav:
       - Patching time: notebooks/patching_time.ipynb
       - Patching streaming: notebooks/patching_streaming.ipynb
       - Catalog ↔ patching: notebooks/catalog_patching.ipynb
-  - Recipes:
       - torch Dataset: notebooks/recipes_torch_dataset.ipynb
       - JAX vmap: notebooks/recipes_jax_vmap.ipynb
       - Grain MapDataset: notebooks/recipes_grain.ipynb
-  - API Reference: api/reference.md
+  - Reference:
+      - Patching (legacy): patching.md
+      - Observability hooks: observability.md
+      - Async and prefetch: patching/async-prefetch.md
+  - API reference: api/reference.md
+  - Design decisions: decisions.md
   - Contributing: contributing.md
 
 markdown_extensions:

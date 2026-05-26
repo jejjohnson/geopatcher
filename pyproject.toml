@@ -124,6 +124,9 @@ ignore = ["E402", "E721", "E731", "E741"]
 # (E501) is also relaxed because long dict / tuple literals in tutorials
 # are clearer on one line than split.
 "*.ipynb" = ["RUF001", "RUF002", "RUF003", "E501"]
+# The diagram-generator script uses Greek/math glyphs in axis labels and
+# titles for figure rendering — same noise as the notebooks.
+"docs/assets/make_diagrams.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
