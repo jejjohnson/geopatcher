@@ -2,7 +2,8 @@
 
 Re-exports `RasterField` / `AsyncRasterField` eagerly and the extras-gated
 adapters (`XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`,
-`DaskField`) lazily — so ``from geopatcher.fields import XarrayField`` only triggers the
+`DaskField`, `ObstoreCogField`) lazily — so
+``from geopatcher.fields import XarrayField`` only triggers the
 optional-extra import path when the name is actually accessed.
 """
 
@@ -20,6 +21,7 @@ __all__ = [  # noqa: F822 - extras-gated names resolved via __getattr__
     "AsyncRasterField",
     "DaskField",
     "GeoPandasField",
+    "ObstoreCogField",
     "RasterField",
     "RioXarrayField",
     "XarrayField",
@@ -35,6 +37,7 @@ def __getattr__(name: str) -> Any:
         "XvecField",
         "RioXarrayField",
         "DaskField",
+        "ObstoreCogField",
     }:
         from geopatcher._src import fields as _f
 

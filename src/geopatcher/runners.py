@@ -85,6 +85,7 @@ def parallel_map(
             patcher=patcher,
             field=field,
             batch_size=batch_size,
+            on_error=on_error,
         )
     else:
         patches = list(patcher.split(field))
@@ -180,14 +181,32 @@ class _DeferredSelectField:
 
 
 def _bulk_select_patches(
-    *, patcher: SpatialPatcher, field: Field, batch_size: int
+    *,
+    patcher: SpatialPatcher,
+    field: Field,
+    batch_size: int,
+    on_error: ErrorPolicy = "raise",
 ) -> list[Patch]:
     """Drive the patcher with a deferred-select stub, then ``select_many``.
 
     Splits the full patch list into chunks of ``batch_size`` and runs
     one ``field.select_many`` per chunk so peak memory stays bounded
     by the chunk's array volume rather than the full fan-out.
+
+    Patch indices are passed through the same ``_unwrap_for_select``
+    helper that the patcher's normal per-patch path uses, so geometries
+    like ``SpatialPolygonIntersection`` that wrap their indices in a
+    ``_MaskedWindow`` work correctly with batched fields.
+
+    When ``on_error="skip"`` and ``field.select_many`` raises for a
+    chunk, we fall back to per-patch ``field.select`` for that chunk so
+    the patch-level skip semantics from the non-batched path are
+    preserved (one bad tile shouldn't sink an entire chunk of N
+    otherwise-good patches). When ``on_error="raise"`` the exception
+    propagates as usual.
     """
+    from geopatcher._src.spatial.patcher import _unwrap_for_select
+
     stub = _DeferredSelectField(field)
     patches = list(patcher.split(stub))
     if not patches:
@@ -195,7 +214,27 @@ def _bulk_select_patches(
     out: list[Patch] = []
     for start in range(0, len(patches), batch_size):
         chunk = patches[start : start + batch_size]
-        arrays = field.select_many([p.indices for p in chunk])
+        indices = [_unwrap_for_select(p.indices) for p in chunk]
+        try:
+            arrays = field.select_many(indices)
+        except Exception:
+            if on_error != "skip":
+                raise
+            # Fall back to per-patch reads so individual failures get
+            # scoped (and skipped) rather than aborting the chunk.
+            for patch, idx in zip(chunk, indices, strict=True):
+                try:
+                    data = field.select(idx)
+                except Exception as exc:
+                    warnings.warn(
+                        f"parallel_map skipped patch at anchor {patch.anchor!r} "
+                        f"after select error: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                out.append(replace(patch, data=data))
+            continue
         if len(arrays) != len(chunk):
             raise RuntimeError(
                 f"field.select_many returned {len(arrays)} arrays for "

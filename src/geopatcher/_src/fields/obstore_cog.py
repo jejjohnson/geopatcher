@@ -34,9 +34,14 @@ Surface
 - ``with_data(array)`` — reconstruct a ``GeoTensor`` from operator
   output (delegates to georeader).
 
-Both extras (``obstore`` and ``async-tiff``) are required; importing
-this module without them raises :class:`ImportError` with the install
-hint.
+Both extras (``obstore`` and ``async-tiff``) are required at *call*
+time — importing this module is fine without them, but
+:meth:`ObstoreCogField.from_url` invokes the internal
+``_require_async_tiff`` guard which raises :class:`ImportError` with
+the install hint if either is missing. The lazy check keeps
+``from geopatcher.fields import ObstoreCogField`` cheap on a slim
+install (the lazy export in ``_src.fields.__init__`` doesn't import
+this module unless the name is actually accessed).
 """
 
 from __future__ import annotations
@@ -126,6 +131,35 @@ class ObstoreCogDomain:
     shape: tuple[int, ...]
     bounds: tuple[float, float, float, float]
     res: tuple[float, float]
+
+
+def _dtype_from_ifd(ifd: Any) -> np.dtype:
+    """Derive a numpy dtype from the IFD's sample-format + bit-depth tags.
+
+    Falls back to ``float32`` when the tags can't be interpreted —
+    matches the historical behaviour of the empty-tile-range zero
+    fill in :func:`_assemble_window`, but only as a last resort.
+    """
+    try:
+        bps_raw = ifd.bits_per_sample
+        sf_raw = ifd.sample_format
+        # Both come back as lists (one entry per sample); we use the
+        # first sample's spec because COGs uniformly type all samples.
+        bps = int(bps_raw[0]) if hasattr(bps_raw, "__getitem__") else int(bps_raw)
+        sf = sf_raw[0] if hasattr(sf_raw, "__getitem__") else sf_raw
+        # ``async_tiff.enums.SampleFormat`` exposes a ``.value`` int.
+        sf_int = int(getattr(sf, "value", sf))
+    except (TypeError, ValueError, AttributeError, IndexError):
+        return np.dtype("float32")
+
+    # SampleFormat: 1 = unsigned int, 2 = signed int, 3 = float.
+    if sf_int == 3:
+        return np.dtype(f"float{bps}")
+    if sf_int == 2:
+        return np.dtype(f"int{bps}")
+    if sf_int == 1:
+        return np.dtype(f"uint{bps}")
+    return np.dtype("float32")
 
 
 def _build_domain(ifd: Any) -> ObstoreCogDomain:
@@ -333,6 +367,12 @@ class ObstoreCogField:
             zip(coord_list, decoded, strict=True)
         )
 
+        # Derive (bands, dtype) from the IFD so the empty-tile-range
+        # path (window entirely outside the image) returns an array of
+        # the right shape/dtype even when no tile was fetched.
+        bands = int(self.ifd.samples_per_pixel)
+        dtype = _dtype_from_ifd(self.ifd)
+
         results: list[np.ndarray] = []
         for window, (tx_min, ty_min, tx_max, ty_max) in zip(
             windows, per_window_tile_ranges, strict=True
@@ -347,6 +387,8 @@ class ObstoreCogField:
                     ty_max=ty_max,
                     tile_w=tile_w,
                     tile_h=tile_h,
+                    bands=bands,
+                    dtype=dtype,
                 )
             )
         return results
@@ -432,24 +474,29 @@ def _assemble_window(
     ty_max: int,
     tile_w: int,
     tile_h: int,
+    bands: int,
+    dtype: np.dtype,
 ) -> np.ndarray:
-    """Crop the relevant tiles into a single window-shaped array."""
+    """Crop the relevant tiles into a single window-shaped array.
+
+    ``bands`` and ``dtype`` come from the IFD via :func:`_dtype_from_ifd`
+    + ``samples_per_pixel``, so the empty-tile-range fallback (window
+    entirely outside the image) returns an array of the right shape
+    even when no tile was decoded — preserving the documented
+    ``(bands, h, w)`` contract regardless of batch composition.
+    """
     col_off = int(window.col_off)
     row_off = int(window.row_off)
     w = int(window.width)
     h = int(window.height)
 
     if tx_max < tx_min or ty_max < ty_min:
-        # Empty tile range — window is outside the image.
-        sample_tile = next(iter(tile_data.values()), None)
-        if sample_tile is None or sample_tile.ndim < 2:
-            return np.zeros((h, w), dtype=np.float32)
-        bands_shape = sample_tile.shape[:-2]
-        return np.zeros((*bands_shape, h, w), dtype=sample_tile.dtype)
+        # Empty tile range — window is outside the image. Use the
+        # IFD-derived (bands, dtype) so the result is consistent with
+        # any in-bounds window in the same select_many call.
+        return np.zeros((bands, h, w), dtype=dtype)
 
-    sample = tile_data[(tx_min, ty_min)]
-    bands_shape = sample.shape[:-2] if sample.ndim > 2 else ()
-    out = np.zeros((*bands_shape, h, w), dtype=sample.dtype)
+    out = np.zeros((bands, h, w), dtype=dtype)
 
     for ty in range(ty_min, ty_max + 1):
         for tx in range(tx_min, tx_max + 1):

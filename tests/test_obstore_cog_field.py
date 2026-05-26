@@ -201,6 +201,23 @@ def test_select_many_empty_returns_empty(cog_field: ObstoreCogField):
     assert cog_field.select_many([]) == []
 
 
+def test_select_many_all_windows_outside_image_keeps_band_axis(
+    cog_field: ObstoreCogField,
+):
+    """Regression: out-of-image-only batches must still emit (bands, h, w).
+
+    Previously the empty-tile-range fallback dropped the band axis
+    when no tile was decoded — making output shape depend on batch
+    composition. Now we derive bands+dtype from the IFD so the shape
+    contract holds regardless of what's in the chunk.
+    """
+    out = cog_field.select_many([Window(col_off=100, row_off=100, width=8, height=8)])
+    assert len(out) == 1
+    # Single-band fixture COG → (1, 8, 8); important: 3D, not 2D.
+    assert out[0].shape == (1, 8, 8)
+    assert out[0].dtype == np.float32  # matches the fixture's dtype
+
+
 def test_select_many_dedups_tile_fetches(cog_field: ObstoreCogField, monkeypatch):
     """Two windows sharing tiles should issue one batched fetch.
 
