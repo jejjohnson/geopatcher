@@ -74,6 +74,8 @@ matrix, an evaluation array, a stitched reconstruction with masked
 gaps):
 
 ```python
+import numpy as np
+
 patcher = gp.SpatialPatcher(..., on_error="mask")
 
 for patch in patcher.split(field):

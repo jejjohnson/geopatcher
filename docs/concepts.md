@@ -103,7 +103,7 @@ patcher = SpatialPatcher(geometry=..., sampler=..., window=..., aggregation=...)
 
 for patch in patcher.split(field):     # Iterator[Patch] — streaming default
     out = operator(patch.data)
-    yield dataclasses.replace(patch, data=out)
+    yield patch.with_data(out)
 
 stitched = patcher.merge(out_patches, field.domain)
 ```
@@ -142,7 +142,7 @@ this as a first-class parameter:
 geom = SpatialRectangular(size=(256, 256), boundary="pad")
 ```
 
-![clip / pad / drop boundary behaviors](assets/boundary-modes.png)
+![shrink / pad / drop boundary behaviors](assets/boundary-modes.png)
 
 | Mode | Behavior |
 |------|----------|
@@ -165,9 +165,11 @@ one is materialised.
 patcher = SpatialPatcher(..., aggregation=SpatialOverlapAdd())
 stitched = patcher.merge(patcher.split(field), field.domain)
 
-# Bounded-memory accumulator on disk (zarr) instead of RAM:
+# Bounded-memory accumulator on disk (zarr) instead of RAM.
+# Route the merge call through `agg` (not the patcher's default agg)
+# so the streaming code path is the one that actually runs.
 agg = SpatialOverlapAdd(streaming=True, target_path="out/", chunks=(256, 256))
-stitched_zarr = patcher.merge(patcher.split(field), field.domain)
+stitched_zarr = agg.merge(patcher.split(field), field.domain)
 ```
 
 Every `SpatialAggregation` carries a `streaming_safe: ClassVar[bool]`

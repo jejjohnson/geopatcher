@@ -52,7 +52,7 @@ patcher = gp.SpatialPatcher(
 )
 
 outputs = [
-    dataclasses.replace(p, data=np.asarray(p.data) * 2.0)
+    p.with_data(np.asarray(p.data) * 2.0)
     for p in patcher.split(field)
 ]
 stitched = patcher.merge(outputs, field.domain)
@@ -121,17 +121,17 @@ def run_inner(super_data: np.ndarray) -> np.ndarray:
                   crs="EPSG:32630")
     )
     sub_outs = [
-        dataclasses.replace(p, data=my_operator(p.data))
+        p.with_data(my_operator(p.data))
         for p in inner.split(sub_field)
     ]
     return inner.merge(sub_outs, sub_field.domain)
 
 
 outer_outputs = [
-    dataclasses.replace(p, data=run_inner(np.asarray(p.data)))
-    for p in outer.split(global_field)
+    p.with_data(run_inner(np.asarray(p.data)))
+    for p in outer.split(field)
 ]
-outer.merge(outer_outputs, global_field.domain)
+outer.merge(outer_outputs, field.domain)
 ```
 
 Peak memory tops out at `(super-tile RAM) + (one chip)` — the right size

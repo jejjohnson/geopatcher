@@ -38,9 +38,10 @@ COG/zarr streaming — all the same four-axis composition. Pick a
 **Geometry** (shape of the neighborhood), a **Sampler** (where anchors
 go), a **Window** (boundary treatment), and an **Aggregation** (local →
 global merge). Plug in any `Field` (raster, xarray grid, GeoPandas
-polygons, xvec points) and any per-patch callable. Streaming is the
-default; `patcher.split` returns an iterator and `SpatialOverlapAdd`
-accumulates straight to disk-backed zarr for >1 TB outputs.
+polygons, xvec points) and any per-patch callable. `patcher.split`
+returns an iterator and `SpatialOverlapAdd` defaults to an in-memory
+accumulator; flip `streaming=True` + `target_path=…` to back the
+accumulator with disk-resident zarr for >1 TB outputs.
 
 ## Install
 
@@ -87,7 +88,7 @@ patcher = gp.SpatialPatcher(
 out = []
 for patch in patcher.split(field):                        # Iterator[Patch]
     new_data = np.asarray(patch.data) * 2.0               # your operator here
-    out.append(dataclasses.replace(patch, data=new_data))
+    out.append(patch.with_data(new_data))
 
 stitched = patcher.merge(out, field.domain)               # global ndarray
 ```

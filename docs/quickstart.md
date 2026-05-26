@@ -60,7 +60,7 @@ print(item.id, "cloud cover:", item.properties["eo:cloud_cover"])
 ```python
 import rioxarray
 
-red = rioxarray.open_rasterio(red_href, masked=True, chunks={"x": 1024, "y": 1024})
+red = rioxarray.open_rasterio(red_href, masked=True)
 print(red.shape, red.rio.crs)
 ```
 
@@ -99,8 +99,9 @@ patch boundary, so OverlapAdd's normalisation hides the seams.
 
 ## 5. Per-patch operator — channel normalisation
 
-A toy operator that L1-normalises each patch — enough to show the
-shape-preserving plumbing without depending on a trained model:
+A toy operator that z-score normalises each patch (subtract mean,
+divide by stddev) — enough to show the shape-preserving plumbing
+without depending on a trained model:
 
 ```python
 import dataclasses
@@ -118,7 +119,7 @@ def normalise(arr: np.ndarray) -> np.ndarray:
 outputs = []
 for patch in patcher.split(field):
     new_data = normalise(patch.data)
-    outputs.append(dataclasses.replace(patch, data=new_data))
+    outputs.append(patch.with_data(new_data))
 ```
 
 Streaming is the default — `patcher.split` returns an `Iterator[Patch]`
@@ -133,8 +134,9 @@ print(stitched.shape, stitched.dtype)
 ```
 
 For a >1 TB output that won't fit in RAM, swap the in-memory aggregation
-for the disk-backed one — same call, just point `target_path` at a fresh
-zarr directory:
+for the disk-backed one **and** stream the patches in — never build the
+full `outputs` list. The `normalise → with_data` step is now done inline
+so only one patch is alive at a time:
 
 ```python
 agg = gp.SpatialOverlapAdd(
@@ -142,11 +144,16 @@ agg = gp.SpatialOverlapAdd(
     target_path="out/tahoe.zarr",
     chunks=(256, 256),
 )
-stitched_zarr = agg.merge(outputs, field.domain)
+stitched_zarr = agg.merge(
+    (patch.with_data(normalise(patch.data)) for patch in patcher.split(field)),
+    field.domain,
+)
 ```
 
-See [`recipes/streaming-overlap-add.md`](recipes/streaming-overlap-add.md)
-for the full bounded-memory pattern.
+The generator expression means at most one patch worth of bytes lives
+in RAM during the merge — bounded regardless of scene size. See
+[`recipes/streaming-overlap-add.md`](recipes/streaming-overlap-add.md)
+for the full pattern.
 
 ## 7. Inspect the result
 

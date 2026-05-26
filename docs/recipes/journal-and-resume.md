@@ -56,6 +56,8 @@ with a warning.
 import dataclasses
 import time
 
+import numpy as np
+
 from geopatcher import PatchJournal
 import geopatcher as gp
 
