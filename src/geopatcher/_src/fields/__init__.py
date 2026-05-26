@@ -21,6 +21,7 @@ from geopatcher._src.fields.raster import (
 __all__ = [
     "AsyncRasterField",
     "DaskField",
+    "ObstoreCogField",
     "RasterField",
 ]
 
@@ -52,4 +53,8 @@ def __getattr__(name: str):
         from geopatcher._src.fields.dask import DaskField
 
         return DaskField
+    if name == "ObstoreCogField":
+        from geopatcher._src.fields.obstore_cog import ObstoreCogField
+
+        return ObstoreCogField
     raise AttributeError(name)
