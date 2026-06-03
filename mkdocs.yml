@@ -48,6 +48,7 @@ nav:
       - Streaming overlap-add: recipes/streaming-overlap-add.md
       - On-error policies: recipes/on-error-policies.md
       - Journal & resume: recipes/journal-and-resume.md
+      - Temporal stencils: recipes/temporal-stencils.md
   - Tutorial:
       - Patching Sentinel-2 (Lake Tahoe): notebooks/patcher_lake_tahoe.ipynb
   - Extended examples ↗: https://github.com/jejjohnson/research_notebook/tree/main/projects/geostack/notebooks/patching

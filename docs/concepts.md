@@ -221,6 +221,26 @@ See [`recipes/on-error-policies.md`](recipes/on-error-policies.md) for
 the full pattern, and [`recipes/journal-and-resume.md`](recipes/journal-and-resume.md)
 for the `PatchJournal` restart story.
 
+## Index space vs coordinate space (temporal stencils)
+
+By default the temporal samplers and geometries work in **integer index
+space**: `TemporalRegularStride(step=3)` skips three array elements,
+`TemporalLookbackHorizon(lookback=12)` counts twelve array elements
+backwards. This is fast and unambiguous when the source cadence is fixed
+and known.
+
+For workloads where the cadence is a property of the *store* (ARCO-ERA5
+Zarrs, multi-resolution archives) you also want **coordinate space** —
+"9 hours of context, regardless of whether that's 9 array steps or 3 or
+something else." `TimeStencil` plus `TemporalStencilGeometry` /
+`TemporalStencilSampler` express the window in physical units against a
+1-D coordinate vector you pass via `TemporalPatcher.split(..., coord=)`.
+The patcher requires `coord=` when either component opts in via
+`needs_coord = True`; the integer path is unchanged when it doesn't.
+The recipe in [`recipes/temporal-stencils.md`](recipes/temporal-stencils.md)
+walks through both layers; ADR-004 in
+[`decisions.md`](decisions.md) records the design.
+
 ## Where the framework draws the line
 
 - **Mesh / `uxarray`** (`UXarrayField`) is deferred to v0.2.
