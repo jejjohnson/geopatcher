@@ -23,9 +23,16 @@ class TemporalGeometry:
 
     Subclasses implement ``window(time_len, anchor) -> slice | list[slice]``.
     A list is returned by multi-scale geometries.
+
+    Coordinate-aware subclasses (e.g. `TemporalStencilGeometry`) set
+    ``needs_coord = True`` and implement
+    ``window_coord(coord, anchor_idx) -> slice``. `TemporalPatcher` dispatches
+    on the flag and requires a ``coord=`` argument when it is `True`. See
+    ADR-00N.
     """
 
     forbid_in_yaml: ClassVar[bool] = False
+    needs_coord: ClassVar[bool] = False
 
     def window(self, time_len: int, anchor: int) -> slice | list[slice]:
         raise NotImplementedError

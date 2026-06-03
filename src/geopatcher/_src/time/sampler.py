@@ -22,10 +22,15 @@ import numpy as np
 class TemporalSampler:
     """Base for temporal anchor placement.
 
-    Subclasses implement `anchors(time_len) -> Iterable[int]`.
+    Subclasses implement `anchors(time_len) -> Iterable[int]`. The base
+    signature is integer-only; coordinate-aware subclasses (e.g.
+    `TemporalStencilSampler`) set ``needs_coord = True`` and accept a
+    ``coord=`` keyword in `anchors`. `TemporalPatcher` passes the coord
+    vector through when the flag is `True`. See ADR-00N.
     """
 
     forbid_in_yaml: ClassVar[bool] = False
+    needs_coord: ClassVar[bool] = False
 
     def anchors(self, time_len: int) -> Iterable[int]:
         raise NotImplementedError

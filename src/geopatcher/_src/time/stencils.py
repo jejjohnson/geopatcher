@@ -38,11 +38,10 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal
 
 import numpy as np
 
-T = TypeVar("T")
 
 Closed = Literal["left", "right", "both", "neither"]
 
@@ -90,7 +89,7 @@ def divide_evenly(
 
 
 @dataclasses.dataclass(frozen=True)
-class Stencil(Generic[T]):
+class Stencil[T]:
     """Sample points relative to an origin, in coordinate units.
 
     Args:
@@ -171,7 +170,7 @@ def _scalar(value: Any) -> Any:
     `datetime64`/`timedelta64` are returned as `str(value)` so YAML stays
     portable; numeric scalars unwrap to Python ints/floats.
     """
-    if isinstance(value, np.timedelta64) or isinstance(value, np.datetime64):
+    if isinstance(value, (np.datetime64, np.timedelta64)):
         return str(value)
     if isinstance(value, np.generic):
         return value.item()
@@ -310,7 +309,7 @@ def build_sampling_slices(
 
     return [
         slice(int(start), int(stop), int(stride))
-        for start, stop in zip(starts.tolist(), stops.tolist())
+        for start, stop in zip(starts.tolist(), stops.tolist(), strict=True)
     ]
 
 
