@@ -241,6 +241,22 @@ The recipe in [`recipes/temporal-stencils.md`](recipes/temporal-stencils.md)
 walks through both layers; ADR-004 in
 [`decisions.md`](decisions.md) records the design.
 
+## Random access via `IndexedPatchView`
+
+`SpatialPatcher.split` returns an iterator (ADR-001 — laziness is
+the default). For ML loaders that need integer-indexed random access —
+torch `Dataset.__getitem__`, Grain `RandomAccessDataSource`, xrpatcher's
+`patcher[i]` — wrap the (patcher, field) pair in an
+`IndexedPatchView`. It's a stdlib `Sequence[Patch]` with optional
+in-memory `cache=True` / `preload=True` flags mirroring xrpatcher's API.
+
+The iterator-first split stays canonical; `IndexedPatchView` is a
+wrapper, not a replacement. No torch/grain/jax dependency in
+`geopatcher` core — frameworks wrap the Sequence themselves in one line.
+The recipe in [`recipes/xarray-nd-patching.md`](recipes/xarray-nd-patching.md)
+walks through the migration story; ADR-005 in
+[`decisions.md`](decisions.md) records the design.
+
 ## Where the framework draws the line
 
 - **Mesh / `uxarray`** (`UXarrayField`) is deferred to v0.2.
