@@ -46,12 +46,8 @@ def test_coord_values_match_slice() -> None:
         {"latitude": slice(0, 6), "longitude": slice(0, 6)}
     )
     coord = field.coords_per_patch([patch])[0]
-    np.testing.assert_array_equal(
-        coord["latitude"].values, da["latitude"].values[:6]
-    )
-    np.testing.assert_array_equal(
-        coord["longitude"].values, da["longitude"].values[:6]
-    )
+    np.testing.assert_array_equal(coord["latitude"].values, da["latitude"].values[:6])
+    np.testing.assert_array_equal(coord["longitude"].values, da["longitude"].values[:6])
 
 
 def test_coord_dataset_has_no_data_variables() -> None:

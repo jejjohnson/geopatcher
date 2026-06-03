@@ -20,7 +20,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, overload
 
 from geopatcher._src.patch import Patch
 
@@ -72,16 +72,21 @@ class IndexedPatchView(Sequence[Patch]):
     def __len__(self) -> int:
         return len(self._anchors)
 
-    def __getitem__(self, idx: Any) -> Patch:  # type: ignore[override]
+    @overload
+    def __getitem__(self, idx: int) -> Patch: ...
+
+    @overload
+    def __getitem__(self, idx: slice) -> list[Patch]: ...
+
+    def __getitem__(self, idx: int | slice) -> Patch | list[Patch]:
         if isinstance(idx, slice):
-            return [self[i] for i in range(*idx.indices(len(self._anchors)))]  # type: ignore[return-value]
+            return [self[i] for i in range(*idx.indices(len(self._anchors)))]
         i = int(idx)
         if i < 0:
             i += len(self._anchors)
         if i < 0 or i >= len(self._anchors):
             raise IndexError(
-                f"IndexedPatchView index {idx} out of range "
-                f"[0, {len(self._anchors)})"
+                f"IndexedPatchView index {idx} out of range [0, {len(self._anchors)})"
             )
         if self.cache and i in self._cache:
             return self._cache[i]

@@ -112,8 +112,7 @@ class SpatialRegularStride(SpatialSampler):
             dims = list(domain.coords)
             lens = tuple(len(domain.coords[d]) for d in dims)
             sizes = tuple(
-                int(s)
-                for s in getattr(geometry, "size", tuple([1] * len(dims)))
+                int(s) for s in getattr(geometry, "size", tuple([1] * len(dims)))
             )
             steps = self._broadcast(len(dims))
             axes = tuple(dims)

@@ -49,9 +49,7 @@ def _cube() -> xr.DataArray:
 def _patcher(check_full_scan: bool = True) -> SpatialPatcher:
     return SpatialPatcher(
         geometry=SpatialRectangular(size=(6, 6)),
-        sampler=SpatialRegularStride(
-            step=(6, 6), check_full_scan=check_full_scan
-        ),
+        sampler=SpatialRegularStride(step=(6, 6), check_full_scan=check_full_scan),
         window=SpatialBoxcar(),
         aggregation=SpatialOverlapAdd(),
     )
@@ -113,9 +111,7 @@ class TestMergeToXarray:
         patcher = _patcher()
         recon = patcher.merge_to_xarray(list(patcher.split(field)), field)
         for name in ("latitude", "longitude"):
-            np.testing.assert_array_equal(
-                recon[name].values, da[name].values
-            )
+            np.testing.assert_array_equal(recon[name].values, da[name].values)
 
 
 class TestCheckFullScan:

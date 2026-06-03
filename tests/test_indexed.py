@@ -78,9 +78,7 @@ class TestSequenceProtocol:
 
 
 class TestCaching:
-    def test_cache_off_returns_fresh_patch_each_call(
-        self, patcher, field
-    ) -> None:
+    def test_cache_off_returns_fresh_patch_each_call(self, patcher, field) -> None:
         view = IndexedPatchView(patcher, field, cache=False)
         a = view[0]
         b = view[0]
