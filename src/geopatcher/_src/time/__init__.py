@@ -32,6 +32,7 @@ from geopatcher._src.time.sampler import (
     TemporalRandom,
     TemporalRegularStride,
     TemporalSampler,
+    TemporalStencilSampler,
 )
 from geopatcher._src.time.stencils import (
     Closed,
@@ -74,6 +75,7 @@ __all__ = [
     "TemporalRegularStride",
     "TemporalSampler",
     "TemporalStencilGeometry",
+    "TemporalStencilSampler",
     "TemporalTaperedTukey",
     "TemporalWindow",
     "TimeStencil",
