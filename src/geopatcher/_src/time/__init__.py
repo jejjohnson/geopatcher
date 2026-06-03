@@ -22,6 +22,7 @@ from geopatcher._src.time.geometry import (
     TemporalLookbackHorizon,
     TemporalMultiScale,
     TemporalPhaseWindow,
+    TemporalStencilGeometry,
 )
 from geopatcher._src.time.patcher import TemporalPatcher
 from geopatcher._src.time.sampler import (
@@ -72,6 +73,7 @@ __all__ = [
     "TemporalRandom",
     "TemporalRegularStride",
     "TemporalSampler",
+    "TemporalStencilGeometry",
     "TemporalTaperedTukey",
     "TemporalWindow",
     "TimeStencil",
