@@ -17,15 +17,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+import numpy as np
+
+from geopatcher._src.time.stencils import (
+    Stencil,
+    build_sampling_slices,
+    divide_evenly,
+)
+
 
 class TemporalGeometry:
     """Base for time-window shapes.
 
     Subclasses implement ``window(time_len, anchor) -> slice | list[slice]``.
     A list is returned by multi-scale geometries.
+
+    Coordinate-aware subclasses (e.g. `TemporalStencilGeometry`) set
+    ``needs_coord = True`` and implement
+    ``window_coord(coord, anchor_idx) -> slice``. `TemporalPatcher` dispatches
+    on the flag and requires a ``coord=`` argument when it is `True`. See
+    ADR-00N.
     """
 
     forbid_in_yaml: ClassVar[bool] = False
+    needs_coord: ClassVar[bool] = False
 
     def window(self, time_len: int, anchor: int) -> slice | list[slice]:
         raise NotImplementedError
@@ -94,6 +109,89 @@ class TemporalMultiScale(TemporalGeometry):
 
     def get_config(self) -> dict[str, Any]:
         return {"scales": list(self.scales)}
+
+
+@dataclass(eq=False)
+class TemporalStencilGeometry(TemporalGeometry):
+    """Coordinate-aware geometry that resolves a `Stencil` against a coord.
+
+    Unlike the integer geometries above, the window is resolved in *coordinate*
+    space via `window_coord(coord, anchor_idx)`. `TemporalPatcher` dispatches
+    on the `needs_coord` flag and supplies the coord vector through the
+    `split(..., coord=)` argument. Calling the integer `window` is a TypeError
+    so mis-wiring fails loudly.
+
+    v0.1 supports stride-1 stencils only (the `TemporalWindow.weights` and
+    `TemporalAggregation.merge` contracts assume contiguous index ranges).
+    Pass ``source_step`` at construction to catch stride > 1 up front; the
+    constructor also re-checks at `window_coord` time as a belt-and-braces
+    guard for callers that didn't supply it. See ADR-00N.
+
+    Args:
+        stencil: The `Stencil` (or `TimeStencil`) describing the window shape
+            in coordinate units.
+        source_step: Optional cadence of the source grid (same units as
+            ``stencil.step``). If provided, the constructor raises immediately
+            on stride > 1 instead of waiting for `window_coord`.
+    """
+
+    stencil: Stencil
+    source_step: Any = None
+    needs_coord: ClassVar[bool] = True
+
+    def __post_init__(self) -> None:
+        if self.source_step is not None:
+            sigma = int(
+                divide_evenly(
+                    self.stencil.step,
+                    self.source_step,
+                    label="stencil step / source step",
+                ).item()
+            )
+            if sigma != 1:
+                raise ValueError(
+                    "v0.1 supports stride-1 stencils only; got "
+                    f"stride={sigma}. Use a stencil step equal to the source "
+                    "cadence, or wait for v0.2."
+                )
+
+    def window_coord(self, coord: np.ndarray, anchor_idx: int) -> slice:
+        """Resolve the stencil at the given anchor index → contiguous slice.
+
+        Args:
+            coord: 1-D monotonic-ascending coordinate array along the time
+                axis (e.g. ``ds["time"].values``).
+            anchor_idx: Integer index into ``coord`` marking the origin.
+
+        Returns:
+            ``slice(start, stop)`` covering the realised stencil window in
+            integer index space.
+        """
+        origin = coord[int(anchor_idx)]
+        (s,) = build_sampling_slices(coord, np.asarray([origin]), self.stencil)
+        if s.step is not None and s.step != 1:
+            raise ValueError(
+                f"v0.1 supports stride-1 stencils only; got stride={s.step}."
+            )
+        return slice(s.start, s.stop)
+
+    def window(self, time_len: int, anchor: int) -> slice | list[slice]:
+        raise TypeError(
+            "TemporalStencilGeometry is coordinate-aware; call via "
+            "TemporalPatcher.split(..., coord=time_coord) which dispatches to "
+            "window_coord. Direct integer window() is not defined."
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        source_step = self.source_step
+        if isinstance(source_step, (np.datetime64, np.timedelta64)):
+            source_step = str(source_step)
+        elif isinstance(source_step, np.generic):
+            source_step = source_step.item()
+        return {
+            "stencil": self.stencil.get_config(),
+            "source_step": source_step,
+        }
 
 
 @dataclass(eq=False)

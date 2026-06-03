@@ -22,6 +22,7 @@ from geopatcher._src.time.geometry import (
     TemporalLookbackHorizon,
     TemporalMultiScale,
     TemporalPhaseWindow,
+    TemporalStencilGeometry,
 )
 from geopatcher._src.time.patcher import TemporalPatcher
 from geopatcher._src.time.sampler import (
@@ -31,6 +32,15 @@ from geopatcher._src.time.sampler import (
     TemporalRandom,
     TemporalRegularStride,
     TemporalSampler,
+    TemporalStencilSampler,
+)
+from geopatcher._src.time.stencils import (
+    Closed,
+    Stencil,
+    TimeStencil,
+    build_sampling_slices,
+    divide_evenly,
+    valid_origin_points,
 )
 from geopatcher._src.time.window import (
     TemporalCausalBoxcar,
@@ -42,6 +52,8 @@ from geopatcher._src.time.window import (
 
 
 __all__ = [
+    "Closed",
+    "Stencil",
     "TemporalAggregation",
     "TemporalCausalBoxcar",
     "TemporalCausalRolling",
@@ -62,6 +74,12 @@ __all__ = [
     "TemporalRandom",
     "TemporalRegularStride",
     "TemporalSampler",
+    "TemporalStencilGeometry",
+    "TemporalStencilSampler",
     "TemporalTaperedTukey",
     "TemporalWindow",
+    "TimeStencil",
+    "build_sampling_slices",
+    "divide_evenly",
+    "valid_origin_points",
 ]

@@ -99,6 +99,7 @@ from geopatcher._src.spatial import (  # re-export of all spatial concretes + ba
 from geopatcher._src.spatial_time import SpatioTemporalPatcher
 from geopatcher._src.stacking import stack_patches
 from geopatcher._src.time import (  # re-export of all temporal concretes + bases
+    Stencil,
     TemporalAggregation,
     TemporalCausalBoxcar,
     TemporalCausalRolling,
@@ -119,8 +120,14 @@ from geopatcher._src.time import (  # re-export of all temporal concretes + base
     TemporalRandom,
     TemporalRegularStride,
     TemporalSampler,
+    TemporalStencilGeometry,
+    TemporalStencilSampler,
     TemporalTaperedTukey,
     TemporalWindow,
+    TimeStencil,
+    build_sampling_slices,
+    divide_evenly,
+    valid_origin_points,
 )
 
 
@@ -183,6 +190,7 @@ __all__ = [
     "SpatialWindow",
     "SpatioTemporalPatch",
     "SpatioTemporalPatcher",
+    "Stencil",
     "TemporalAggregation",
     "TemporalCausalBoxcar",
     "TemporalCausalRolling",
@@ -204,16 +212,22 @@ __all__ = [
     "TemporalRandom",
     "TemporalRegularStride",
     "TemporalSampler",
+    "TemporalStencilGeometry",
+    "TemporalStencilSampler",
     "TemporalTaperedTukey",
     "TemporalWindow",
+    "TimeStencil",
     "VectorDomain",
     "__version__",
+    "build_sampling_slices",
+    "divide_evenly",
     "fields",
     "get_strict",
     "set_strict",
     "spatial",
     "stack_patches",
     "time",
+    "valid_origin_points",
 ]
 
 

@@ -19,9 +19,13 @@ from geopatcher import (
     SpatioTemporalPatcher,
     TemporalCausalBoxcar,
     TemporalFixedLookback,
+    TemporalForecast,
     TemporalMean,
     TemporalPatcher,
     TemporalRegularStride,
+    TemporalStencilGeometry,
+    TemporalStencilSampler,
+    TimeStencil,
 )
 
 
@@ -121,4 +125,26 @@ class TestUnknownCoupling:
     ) -> None:
         stp = SpatioTemporalPatcher(spatial=sp, temporal=tp, coupling="weird")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="unknown coupling"):
+            list(stp.split(time_field))
+
+
+class TestCoordAwareTemporalRejected:
+    """coord= plumbing isn't done in SpatioTemporalPatcher yet (gh #58).
+
+    Fail fast with a clear pointer rather than surface as a TypeError mid-
+    iteration from the temporal sampler / geometry signature mismatch.
+    """
+
+    def test_stencil_temporal_raises_with_pointer(
+        self, time_field: RasterField, sp: SpatialPatcher
+    ) -> None:
+        stencil = TimeStencil("-1h", "1h", "1h", closed="both")
+        tp_coord = TemporalPatcher(
+            geometry=TemporalStencilGeometry(stencil=stencil),
+            sampler=TemporalStencilSampler(stencil=stencil),
+            window=TemporalCausalBoxcar(),
+            aggregation=TemporalForecast(horizon=1),
+        )
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="product")
+        with pytest.raises(TypeError, match="coordinate-aware temporal"):
             list(stp.split(time_field))
