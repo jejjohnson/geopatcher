@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from functools import lru_cache
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -17,13 +19,25 @@ class PatcherHook(Protocol):
     Hook objects may implement any subset of these methods. The patchers
     dispatch callbacks dynamically, in order, and convert hook exceptions into
     warnings so observability code cannot interrupt patch generation.
+
+    `on_patch_start` and `on_patch_done` accept an optional trailing
+    ``coord_value`` (or ``None`` for integer geometries). `_dispatch` trims
+    to the callback's actual arity, so single-arg hooks written for the
+    pre-coord protocol still receive only ``anchor`` without warnings.
+    See ADR-00N.
     """
 
     def on_split_start(self, n_anchors: int) -> None: ...
 
-    def on_patch_start(self, anchor: Any) -> None: ...
+    def on_patch_start(self, anchor: Any, coord_value: Any = None) -> None: ...
 
-    def on_patch_done(self, anchor: Any, runtime_s: float, bytes_: int) -> None: ...
+    def on_patch_done(
+        self,
+        anchor: Any,
+        runtime_s: float,
+        bytes_: int,
+        coord_value: Any = None,
+    ) -> None: ...
 
     def on_split_end(self) -> None: ...
 
@@ -43,6 +57,32 @@ def _as_hooks(hooks: Iterable[PatcherHook] | None) -> tuple[PatcherHook, ...]:
     return () if hooks is None else tuple(hooks)
 
 
+@lru_cache(maxsize=256)
+def _positional_arity(callback: Callable[..., Any]) -> int:
+    """Return the number of positional args the callback can accept.
+
+    Used by `_dispatch` to trim trailing arguments so a hook written for the
+    pre-coord protocol (``on_patch_start(self, anchor)``) still works after
+    the patcher started passing the optional ``coord_value`` slot. Returns a
+    very large value if introspection fails (e.g. builtins) so the dispatcher
+    falls back to passing every arg, matching the prior behaviour.
+    """
+    try:
+        sig = inspect.signature(callback)
+    except (TypeError, ValueError):
+        return 1 << 30
+    n = 0
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            return 1 << 30
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            n += 1
+    return n
+
+
 def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
     """Call ``method`` on each hook that implements it.
 
@@ -52,6 +92,9 @@ def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
     the direct `_dispatch` caller, which is usually the patcher method or
     private helper that emitted the callback.
 
+    Trailing args beyond the callback's positional arity are dropped so the
+    coord-value extension stays backwards compatible with single-arg hooks.
+
     Hook failures are intentionally downgraded to warnings: callbacks are
     observability side effects and must not change patcher correctness.
     """
@@ -60,7 +103,8 @@ def _dispatch(hooks: Iterable[PatcherHook], method: str, *args: Any) -> None:
         if callback is None:
             continue
         try:
-            callback(*args)
+            n = _positional_arity(callback)
+            callback(*args[:n])
         except Exception as exc:
             warnings.warn(
                 f"PatcherHook.{method} failed on {type(hook).__name__}: {exc}",

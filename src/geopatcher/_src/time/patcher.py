@@ -220,8 +220,9 @@ class TemporalPatcher:
             _dispatch(hooks, "on_error", anchor, exc)
             raise
         slices = window if isinstance(window, list) else [window]
+        coord_value = coord[int(anchor)] if coord is not None else None
         for s in slices:
-            _dispatch(hooks, "on_patch_start", anchor)
+            _dispatch(hooks, "on_patch_start", anchor, coord_value)
             start = perf_counter()
             try:
                 idx = [slice(None)] * arr.ndim
@@ -240,6 +241,7 @@ class TemporalPatcher:
                 anchor,
                 perf_counter() - start,
                 _nbytes(patch.data),
+                coord_value,
             )
             yield patch
 
