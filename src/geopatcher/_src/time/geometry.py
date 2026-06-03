@@ -171,8 +171,7 @@ class TemporalStencilGeometry(TemporalGeometry):
         (s,) = build_sampling_slices(coord, np.asarray([origin]), self.stencil)
         if s.step is not None and s.step != 1:
             raise ValueError(
-                "v0.1 supports stride-1 stencils only; got "
-                f"stride={s.step}."
+                f"v0.1 supports stride-1 stencils only; got stride={s.step}."
             )
         return slice(s.start, s.stop)
 

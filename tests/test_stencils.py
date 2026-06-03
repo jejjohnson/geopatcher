@@ -47,9 +47,7 @@ class TestStencilPoints:
             (-1, 1, 0.5, "both", [-1.0, -0.5, 0.0, 0.5, 1.0]),
         ],
     )
-    def test_points_match_closedness(
-        self, start, stop, step, closed, expected
-    ) -> None:
+    def test_points_match_closedness(self, start, stop, step, closed, expected) -> None:
         stencil = Stencil(start, stop, step, closed=closed)
         np.testing.assert_allclose(stencil.points, expected)
 
@@ -332,12 +330,8 @@ class TestValidOriginPoints:
             step=np.timedelta64(1, "h"),
             closed="both",
         )
-        expected = np.arange(
-            "2020-01-01T02", "2020-01-01T21", dtype="datetime64[h]"
-        )
-        np.testing.assert_array_equal(
-            valid_origin_points(source, stencil), expected
-        )
+        expected = np.arange("2020-01-01T02", "2020-01-01T21", dtype="datetime64[h]")
+        np.testing.assert_array_equal(valid_origin_points(source, stencil), expected)
 
     def test_no_truncation(self) -> None:
         # For every valid origin, the resolved slice must fit in-record.
