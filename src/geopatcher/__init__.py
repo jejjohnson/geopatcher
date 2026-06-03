@@ -35,6 +35,7 @@ from geopatcher._src.domains import (
     RasterDomain,
     VectorDomain,
 )
+from geopatcher._src.exceptions import IncompleteScanConfiguration
 from geopatcher._src.fields import (
     AsyncRasterField,
     RasterField,
@@ -140,6 +141,7 @@ __all__ = [
     "Domain",
     "Field",
     "GridDomain",
+    "IncompleteScanConfiguration",
     "Patch",
     "PatchErrorRecord",
     "PatchJournal",
