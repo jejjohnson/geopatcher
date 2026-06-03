@@ -126,6 +126,23 @@ class SpatioTemporalPatcher:
     def _checked_coupling(self) -> Literal["product", "coupled"]:
         if self.coupling not in {"product", "coupled"}:
             raise ValueError(f"unknown coupling: {self.coupling!r}")
+        # SpatioTemporalPatcher's temporal-axis dispatch is still integer-only
+        # (see _split_product / _split_coupled). Coordinate-aware temporal
+        # geometries/samplers would need `coord=` plumbed through every method
+        # — tracked as a follow-up. Fail fast with a pointer rather than
+        # surface as a TypeError mid-iteration.
+        temporal = self.temporal
+        if getattr(temporal.geometry, "needs_coord", False) or getattr(
+            temporal.sampler, "needs_coord", False
+        ):
+            raise TypeError(
+                "SpatioTemporalPatcher does not yet thread coord= for "
+                "coordinate-aware temporal geometries/samplers (e.g. "
+                "TemporalStencilGeometry, TemporalStencilSampler). Use "
+                "TemporalPatcher.split(..., coord=) directly, or track "
+                "the follow-up issue for coord plumbing through the "
+                "spatiotemporal path."
+            )
         return self.coupling
 
     def _split_product(
