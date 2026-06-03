@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.4](https://github.com/jejjohnson/geopatcher/compare/v0.0.3...v0.0.4) (2026-06-03)
+
+
+### Features
+
+* **fields:** obstore COG field + batched parallel_map via select_many duck-typing ([#53](https://github.com/jejjohnson/geopatcher/issues/53)) ([1d12ce2](https://github.com/jejjohnson/geopatcher/commit/1d12ce27c58b0d25ef05c443b1d9839bdf4a5ee2))
+* **time:** coordinate-aware temporal patching via TimeStencil (closes [#56](https://github.com/jejjohnson/geopatcher/issues/56)) ([#57](https://github.com/jejjohnson/geopatcher/issues/57)) ([351050b](https://github.com/jejjohnson/geopatcher/commit/351050b40584f6f47b289b05e6c1730cf3b3d44a))
+
 ## [0.0.3](https://github.com/jejjohnson/geopatcher/compare/v0.0.2...v0.0.3) (2026-05-25)
 
 
