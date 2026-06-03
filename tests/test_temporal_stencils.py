@@ -24,9 +24,7 @@ from geopatcher.time import (
 
 
 def _three_hourly_series(start: str = "2020-01-01", end: str = "2020-01-05"):
-    time = np.arange(start, end, dtype="datetime64[h]")[::3].astype(
-        "datetime64[ns]"
-    )
+    time = np.arange(start, end, dtype="datetime64[h]")[::3].astype("datetime64[ns]")
     data = np.arange(time.size, dtype=np.float32)
     return xr.DataArray(data, dims=("time",), coords={"time": time})
 
@@ -108,6 +106,17 @@ def test_missing_coord_raises_at_entry() -> None:
         list(patcher.split(da.values))
 
 
+def test_coord_length_mismatch_raises_at_entry() -> None:
+    # Covers the mixed-pipeline case Codex flagged: coord-aware geometry
+    # + integer sampler would otherwise accept any non-None coord and
+    # silently resolve slices against the wrong timeline.
+    da = _three_hourly_series()
+    coord = XarrayField(da).time_coord()[:5]  # truncated relative to series
+    patcher = _patcher(_stencil())
+    with pytest.raises(ValueError, match="coord length must equal"):
+        list(patcher.split(da.values, coord=coord))
+
+
 def test_cadence_swap_does_not_change_stencil_length() -> None:
     # The same TimeStencil against a 1-hourly source produces windows of
     # the same physical extent (-9h .. +3h, step 3h → 5 points). The
@@ -116,6 +125,4 @@ def test_cadence_swap_does_not_change_stencil_length() -> None:
     # source cadence.
     stencil = _stencil()
     with pytest.raises(ValueError, match="stride-1 stencils only"):
-        TemporalStencilGeometry(
-            stencil=stencil, source_step=np.timedelta64(1, "h")
-        )
+        TemporalStencilGeometry(stencil=stencil, source_step=np.timedelta64(1, "h"))

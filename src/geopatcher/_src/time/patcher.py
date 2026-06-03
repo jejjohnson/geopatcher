@@ -70,12 +70,25 @@ class TemporalPatcher:
             or getattr(self.sampler, "needs_coord", False)
         )
 
-    def _require_coord(self, coord: np.ndarray | None) -> None:
+    def _require_coord(
+        self, coord: np.ndarray | None, time_len: int | None = None
+    ) -> None:
         if self._needs_coord() and coord is None:
             raise ValueError(
                 "Coordinate-aware geometry/sampler requires coord= "
                 "(a 1-D monotonic-ascending coordinate along time_axis)."
             )
+        if coord is not None:
+            if coord.ndim != 1:
+                raise ValueError(f"coord must be 1-D; got shape {coord.shape}.")
+            if time_len is not None and coord.shape[0] != int(time_len):
+                # Catches mixed pipelines (e.g. integer sampler + stencil
+                # geometry) where the sampler would yield indices past the
+                # coord without this check.
+                raise ValueError(
+                    "coord length must equal series.shape[time_axis]: "
+                    f"got coord.shape={coord.shape} vs time_len={time_len}."
+                )
 
     def _sampler_anchors(
         self, time_len: int, coord: np.ndarray | None
@@ -118,9 +131,9 @@ class TemporalPatcher:
         coord: np.ndarray | None = None,
         hooks: Iterable[PatcherHook] | None = None,
     ) -> Iterator[TemporalPatch]:
-        self._require_coord(coord)
         arr = np.asarray(series)
         time_len = int(arr.shape[time_axis])
+        self._require_coord(coord, time_len)
         hook_list = _as_hooks(hooks)
         if not hook_list:
             for anchor in self._sampler_anchors(time_len, coord):
@@ -174,13 +187,11 @@ class TemporalPatcher:
             time_axis: Which axis is the time axis. Default 0.
             coord: See `split`.
         """
-        self._require_coord(coord)
         arr = np.asarray(series)
         time_len = int(arr.shape[time_axis])
+        self._require_coord(coord, time_len)
         return list(
-            self._patches_for_anchor(
-                arr, time_len, int(anchor), time_axis, coord=coord
-            )
+            self._patches_for_anchor(arr, time_len, int(anchor), time_axis, coord=coord)
         )
 
     def anchors(
@@ -196,9 +207,9 @@ class TemporalPatcher:
         geometries emit multiple patches per anchor. Same determinism
         contract as `n_anchors`. See `SpatialPatcher.anchors`.
         """
-        self._require_coord(coord)
         shape = getattr(series, "shape", None) or np.shape(series)
         time_len = int(shape[time_axis])
+        self._require_coord(coord, time_len)
         return [int(a) for a in self._sampler_anchors(time_len, coord)]
 
     def _patches_for_anchor(
@@ -261,9 +272,9 @@ class TemporalPatcher:
         ``np.asarray(series)`` so generic / lazy series don't get
         materialised here. See ``docs/decisions.md`` (ADR-001).
         """
-        self._require_coord(coord)
         shape = getattr(series, "shape", None) or np.shape(series)
         time_len = int(shape[time_axis])
+        self._require_coord(coord, time_len)
         total = 0
         coord_aware = getattr(self.geometry, "needs_coord", False)
         for anchor in self._sampler_anchors(time_len, coord):
