@@ -244,6 +244,93 @@ new typing dependency is the standard-library `Callable` (since
 
 ---
 
+## ADR-004 — Coordinate-aware temporal patching is opt-in; stride-1 only in v0.1
+
+**Context.** The temporal stack works in integer index space:
+`TemporalSampler.anchors(time_len) → Iterable[int]`, `TemporalGeometry.window(
+time_len, anchor) → slice`. This is correct and fast for in-memory arrays at a
+known cadence. It breaks down for ARCO-ERA5-style workloads where the natural
+specification is *physical* — "a 9-hour lookback at the source cadence,
+whatever that is" — and the data cadence is a property of the store, not of
+the caller. A `TimeStencil`-based layer (ported from `neuralgcm/terrax`)
+expresses windows in coordinate units and validates that the requested step
+exactly tiles the source grid.
+
+**Decision.** Extend the temporal protocol via two ClassVar capability flags:
+
+- `TemporalGeometry.needs_coord: ClassVar[bool] = False` (default).
+- `TemporalSampler.needs_coord: ClassVar[bool] = False` (default).
+
+Coordinate-aware subclasses (`TemporalStencilGeometry`,
+`TemporalStencilSampler`) set the flag to `True`. `TemporalPatcher` reads the
+flag from both components; when either is `True`, every public method that
+takes `series` (`split`, `asplit`, `patches_at`, `anchors`, `n_anchors`) also
+requires a `coord=` keyword: a 1-D monotonic-ascending coordinate array along
+`time_axis`. Missing `coord=` raises `ValueError` at the entry point — *before*
+the sampler is invoked — so mis-wiring fails loudly.
+
+Dispatch inside `_patches_for_anchor`:
+
+- If `geometry.needs_coord`, call `geometry.window_coord(coord, anchor_idx)`
+  and expect a contiguous `slice(start, stop)`.
+- Otherwise, call the existing `geometry.window(time_len, anchor)`.
+
+The sampler always returns `int` anchors (indices into `coord`, not coordinate
+values), so the rest of `_patches_for_anchor`, the patch carrier, and the hook
+contract are byte-identical to the integer path.
+
+**v0.1 stride-1 constraint.** `TemporalWindow.weights(geometry, length)` and
+`TemporalAggregation.merge(patches)` both assume contiguous integer index
+ranges (`s.stop - s.start` is the realised window length). A stencil with
+`step > source_step` would yield a strided slice, silently breaking both.
+`TemporalStencilGeometry.__post_init__` raises when `source_step` is supplied
+and `stencil.step / source_step != 1`; `window_coord` re-checks the resolved
+slice's stride at resolve time as a belt-and-braces guard for callers that
+omit `source_step`. Strided reads are deferred to v0.2 — they need
+`TemporalWindow.weights` and `TemporalAggregation.merge` to take a
+realised-length argument.
+
+**Hook payload extension.** `PatcherHook.on_patch_start` and `on_patch_done`
+gain an optional trailing `coord_value` (the resolved `coord[anchor]`, or
+`None` for the integer path). `_dispatch` trims trailing args to the
+callback's positional arity so pre-extension hooks written as
+`on_patch_start(self, anchor)` keep working without `RuntimeWarning`s.
+
+**Consequences.**
+
+- Integer pipelines unchanged. All pre-existing samplers, geometries,
+  windows, and aggregations inherit `needs_coord = False`; their patcher
+  dispatch path is byte-identical.
+- Coordinate-aware pipelines are explicit and discoverable: the
+  `TemporalStencilGeometry`/`TemporalStencilSampler` classes carry the flag,
+  and the patcher's error message names `coord=` as the required argument.
+- Cadence-independence: the same `TimeStencil('-9h', '3h', '3h')` against
+  any 3-hourly source produces the same 5-point window. Re-pointing the
+  notebook at a 1-hourly store raises at construction (stride > 1) rather
+  than silently producing a shorter window.
+- `cftime`-typed coords are out of scope; `XarrayField.time_coord` raises a
+  typed `TypeError` pointing at the conversion path.
+
+**Alternatives considered.**
+
+- *Overload `geometry.window(time_len, anchor)` to accept an optional
+  coord.* Conflates two coordinate systems on one method, makes mixed
+  integer/coord pipelines harder to reason about, and forces every existing
+  geometry to know about coordinate space.
+- *Have the sampler emit `datetime64` origins directly.* Forces the patcher
+  to convert at every call site and changes the public sampler protocol's
+  return type. Keeping `anchors → Iterable[int]` lets the rest of the
+  pipeline stay integer-only.
+- *Drop strided stencils to be permissive.* Would make `window` /
+  `aggregation` correctness subtle and dependent on the stencil shape.
+  Better to raise loudly and ship a real fix in v0.2.
+
+**See also.** GitHub issue #56 (the design doc and tracking issue for this
+work); the upstream `neuralgcm/terrax` `xreader.stencils` module (Apache-2.0,
+© Google LLC) from which the stencil math was ported.
+
+---
+
 ## How to add a decision
 
 1. Open a PR with the proposed addition. The PR description argues the
