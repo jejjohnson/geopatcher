@@ -89,8 +89,14 @@ def divide_evenly(
 
 
 @dataclasses.dataclass(frozen=True)
-class Stencil[T]:
+class Stencil:
     """Sample points relative to an origin, in coordinate units.
+
+    The three numeric fields are deliberately typed `Any` rather than a
+    `TypeVar`: the runtime contract is "all three are the same orderable
+    type, with `+`/`-`/`*` defined" (Python numerics, NumPy scalars,
+    `timedelta64`), but a `TypeVar[T]` confuses static checkers' numeric
+    overload resolution. `TimeStencil` is the typed specialisation.
 
     Args:
         start: Left edge of the window in coordinate units (relative to the
@@ -98,7 +104,8 @@ class Stencil[T]:
         stop: Right edge in coordinate units. Must satisfy ``start <= stop``;
             for the degenerate single-point stencil ``start == stop`` and
             ``step == 0`` with ``closed="both"``.
-        step: Spacing between sample points in coordinate units.
+        step: Spacing between sample points in coordinate units. Must be
+            strictly positive when ``start < stop``.
         closed: Which endpoints are included. One of ``"left"``, ``"right"``,
             ``"both"``, ``"neither"``. Defaults to ``"left"``.
 
@@ -107,9 +114,9 @@ class Stencil[T]:
         array([-2. , -1.5, -1. , -0.5,  0. ,  0.5,  1. ,  1.5,  2. ])
     """
 
-    start: T
-    stop: T
-    step: T
+    start: Any
+    stop: Any
+    step: Any
     closed: Closed = dataclasses.field(default="left", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -123,13 +130,23 @@ class Stencil[T]:
                 )
             if self.closed != "both":
                 raise ValueError(
-                    "For single value stencil ``closed`` must be \"both\": "
+                    'For single value stencil ``closed`` must be "both": '
                     f"{self.closed=}"
                 )
         elif self.start > self.stop:
             raise ValueError(
                 f"start must not be greater than stop: {self.start} vs {self.stop}"
             )
+        else:
+            # Non-degenerate window: step must be strictly positive, else
+            # `points` produces an inconsistent / reversed grid and slices
+            # become silently malformed. Caught here so the error names the
+            # field directly.
+            zero = self.stop - self.stop
+            if self.step <= zero:
+                raise ValueError(
+                    f"step must be strictly positive when start < stop: {self.step=}"
+                )
 
     @property
     def includes_start(self) -> bool:
@@ -142,11 +159,12 @@ class Stencil[T]:
     @property
     def points(self) -> np.ndarray:
         """Realised sample points after the closedness trim."""
-        num = (
-            divide_evenly(self.stop - self.start, self.step, label="step")
-            if self.step
-            else 0
-        )
+        if self.step:
+            num = int(
+                divide_evenly(self.stop - self.start, self.step, label="step").item()
+            )
+        else:
+            num = 0
         result = self.start + self.step * np.arange(num + 1)
         if not self.includes_start and self.step:
             result = result[1:]
@@ -177,17 +195,19 @@ def _scalar(value: Any) -> Any:
     return value
 
 
-def _normalize_time_unit(unit: str) -> str:
+_Td64Unit = Literal["D", "h", "m", "s"]
+
+
+def _normalize_time_unit(unit: str) -> _Td64Unit:
     if unit in {"D", "day", "days"}:
         return "D"
-    elif unit in {"h", "hr", "hour", "hours"}:
+    if unit in {"h", "hr", "hour", "hours"}:
         return "h"
-    elif unit in {"m", "min", "minute", "minutes"}:
+    if unit in {"m", "min", "minute", "minutes"}:
         return "m"
-    elif unit in {"s", "sec", "second", "seconds"}:
+    if unit in {"s", "sec", "second", "seconds"}:
         return "s"
-    else:
-        raise ValueError(f"unsupported time unit: {unit!r}")
+    raise ValueError(f"unsupported time unit: {unit!r}")
 
 
 def _to_timedelta64(value: str | np.timedelta64) -> np.timedelta64:
@@ -201,7 +221,7 @@ def _to_timedelta64(value: str | np.timedelta64) -> np.timedelta64:
     return np.timedelta64(value_int, unit)
 
 
-class TimeStencil(Stencil[np.timedelta64]):
+class TimeStencil(Stencil):
     """`Stencil` specialised to `np.timedelta64`.
 
     Accepts NumPy timedelta strings (``"-9h"``, ``"3h"``, ``"30min"``,
