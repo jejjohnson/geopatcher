@@ -1,0 +1,33 @@
+geopatcher
+==========
+
+Copyright 2026 J. Emmanuel Johnson and contributors.
+
+This product is distributed under the MIT License (see LICENSE).
+
+It includes derivative work from the following Apache-2.0 licensed
+projects. The Apache 2.0 License (LICENSE-APACHE) applies to those
+portions of the source code.
+
+------------------------------------------------------------------------
+
+terrax / xreader
+----------------
+
+Copyright 2025 Google LLC
+Licensed under the Apache License, Version 2.0.
+Original author: Stephan Hoyer.
+Source: https://github.com/neuralgcm/terrax
+
+Files containing derivative work:
+
+- src/geopatcher/_src/time/stencils.py
+- tests/test_stencils.py
+
+Each file retains the upstream Apache-2.0 header. Modifications are
+documented inline with "Modifications copyright 2026 J. Emmanuel
+Johnson" lines and are released under the MIT license that covers the
+rest of geopatcher.
+
+The full Apache 2.0 License text is available at
+https://www.apache.org/licenses/LICENSE-2.0.
