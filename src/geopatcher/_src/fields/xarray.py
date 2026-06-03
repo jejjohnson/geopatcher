@@ -54,3 +54,38 @@ class XarrayField:
     def with_data(self, array: Any) -> XarrayField:
         new = self.da.copy(data=np.asarray(array))
         return XarrayField(new)
+
+    def time_coord(self, name: str = "time") -> np.ndarray:
+        """Return the 1-D time coordinate as a NumPy array.
+
+        Helper for the coordinate-aware temporal patcher path. Resolves the
+        coordinate by name (defaults to ``"time"``) and materialises its
+        values so callers don't repeat ``ds[name].values`` boilerplate.
+
+        Args:
+            name: Name of the time-like coordinate. Defaults to ``"time"``.
+
+        Returns:
+            ``np.ndarray`` of dtype ``datetime64[ns]`` (or whatever NumPy
+            unit xarray exposes for that coord).
+
+        Raises:
+            KeyError: If ``name`` is absent from the DataArray's coords.
+            TypeError: If the coordinate is `cftime`-typed — convert via
+                ``xarray.coding.times.convert_calendar(...)`` or
+                ``ds.indexes['time'].to_datetimeindex()`` first.
+        """
+        if name not in self.da.coords:
+            raise KeyError(
+                f"XarrayField has no coord named {name!r}; "
+                f"available: {list(self.da.coords)}"
+            )
+        values = np.asarray(self.da.coords[name].values)
+        if values.dtype == np.dtype("O"):
+            raise TypeError(
+                f"Coord {name!r} has object dtype (likely cftime). "
+                "Convert with xarray.coding.times.convert_calendar(...) "
+                "or DataArray.indexes['time'].to_datetimeindex() before "
+                "passing to TemporalPatcher."
+            )
+        return values
