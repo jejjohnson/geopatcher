@@ -49,8 +49,17 @@ class XarrayField:
         crs = crs.crs if crs is not None else None
         return GridDomain(coords=coords, crs=crs)
 
-    def select(self, indexer: dict[str, slice]) -> XarrayField:
-        return XarrayField(self.da.isel(**indexer))
+    def select(self, indexer: dict[str, slice]) -> Any:
+        """Read a sliced `xarray.DataArray` patch.
+
+        Returns the bare `DataArray` (not another `XarrayField`) so the
+        result is `np.asarray`-able and feeds straight into the spatial
+        aggregations. Mirrors `RasterField.select → GeoTensor`: select
+        returns the natural data payload, not another field wrapper. Use
+        `XarrayField(da_sliced)` if you need to keep treating the slice
+        as a sub-Field.
+        """
+        return self.da.isel(**indexer)
 
     def with_data(self, array: Any) -> XarrayField:
         new = self.da.copy(data=np.asarray(array))
