@@ -380,6 +380,52 @@ class SpatialPatcher:
             return self.merge(materialized, domain, hooks=hooks)
         return self.merge(patches, domain, hooks=hooks)
 
+    def merge_to_xarray(
+        self,
+        patches: Iterable[Any],
+        field: Field,
+        hooks: Iterable[PatcherHook] | None = None,
+    ) -> Any:
+        """`merge` + rewrap as `xarray.DataArray`, restoring the original coords.
+
+        Convenience wrapper for the xrpatcher-style migration story: the
+        bare `merge` returns an `np.ndarray` against the field's domain
+        shape; this calls `field.with_data(...)` to put it back inside a
+        DataArray with the field's coord metadata intact, and unwraps the
+        resulting `XarrayField` to return the underlying `xarray.DataArray`.
+
+        Args:
+            patches: Iterable of patches to merge.
+            field: The `Field` the patches came from. Must expose
+                `with_data(array) -> Field` returning a wrapper that
+                exposes the rebuilt array via a `.da` attribute — i.e.
+                an `XarrayField` (or equivalent).
+
+        Returns:
+            ``xarray.DataArray`` carrying the merged values and the
+            original coords.
+
+        Raises:
+            TypeError: If ``field`` does not expose `with_data`, or if the
+                wrapper returned by `with_data` has no `.da` attribute.
+        """
+        with_data = getattr(field, "with_data", None)
+        if with_data is None:
+            raise TypeError(
+                "merge_to_xarray needs a field with `with_data` "
+                f"(e.g. XarrayField); got {type(field).__name__}."
+            )
+        merged = self.merge(patches, field.domain, hooks=hooks)
+        rewrapped = with_data(merged)
+        if not hasattr(rewrapped, "da"):
+            raise TypeError(
+                f"{type(field).__name__}.with_data must return a wrapper "
+                "exposing the rebuilt array via `.da` (got "
+                f"{type(rewrapped).__name__}). XarrayField is the canonical "
+                "implementation."
+            )
+        return rewrapped.da
+
     def to_delayed(self, field: Field, operator: Any | None = None) -> list[Any]:
         """Build a Dask delayed graph for patches, optionally mapped by an operator."""
         from geopatcher.dask import to_delayed

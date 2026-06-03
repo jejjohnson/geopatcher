@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from geopatcher._src.domains import GridDomain, PointDomain, VectorDomain
+from geopatcher._src.exceptions import IncompleteScanConfiguration
 from geopatcher._src.spatial.geometry import (
     SpatialGeometry,
     _is_raster_domain,
@@ -51,11 +52,21 @@ class SpatialRegularStride(SpatialSampler):
 
     Args:
         step: Stride. A scalar broadcasts; a sequence is per-axis.
+        check_full_scan: If ``True``, raise `IncompleteScanConfiguration`
+            at anchor time when ``(domain_len - patch_size) % step != 0``
+            on any axis — i.e. when the chosen ``(size, step)`` would
+            silently drop a partial tile at the trailing edge. Off by
+            default to preserve the existing "drop the partial" behaviour;
+            opt in for xrpatcher-style strict-tiling workloads. The
+            temporal counterpart is `divide_evenly` in `time/stencils.py`.
     """
 
     step: int | tuple[int, ...]
+    check_full_scan: bool = False
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
+        if self.check_full_scan:
+            self._assert_full_scan(domain, geometry)
         boundary = getattr(geometry, "boundary", "drop")
         if _is_raster_domain(domain):
             h, w = int(domain.shape[-2]), int(domain.shape[-1])
@@ -90,6 +101,35 @@ class SpatialRegularStride(SpatialSampler):
             f"SpatialRegularStride doesn't support {type(domain).__name__} domains."
         )
 
+    def _assert_full_scan(self, domain: Any, geometry: SpatialGeometry) -> None:
+        """Raise `IncompleteScanConfiguration` if any axis would drop a tile."""
+        if _is_raster_domain(domain):
+            lens = (int(domain.shape[-2]), int(domain.shape[-1]))
+            sizes = tuple(int(s) for s in getattr(geometry, "size", (1, 1)))
+            steps = self._broadcast(2)
+            axes = ("row", "col")
+        elif isinstance(domain, GridDomain):
+            dims = list(domain.coords)
+            lens = tuple(len(domain.coords[d]) for d in dims)
+            sizes = tuple(
+                int(s) for s in getattr(geometry, "size", tuple([1] * len(dims)))
+            )
+            steps = self._broadcast(len(dims))
+            axes = tuple(dims)
+        else:
+            # Domains without a dense axis structure (Point/Vector) — the
+            # check doesn't apply; defer to the per-domain anchor logic.
+            return
+        for axis, length, size, step in zip(axes, lens, sizes, steps, strict=True):
+            remainder = (length - size) % step
+            if remainder != 0:
+                raise IncompleteScanConfiguration(
+                    f"Incomplete scan on axis {axis!r}: "
+                    f"(length - size) % step = ({length} - {size}) % {step} "
+                    f"= {remainder} ≠ 0. Adjust size/step or set "
+                    "check_full_scan=False to allow the trailing partial tile."
+                )
+
     def _broadcast(self, n: int) -> tuple[int, ...]:
         if isinstance(self.step, int):
             return tuple([self.step] * n)
@@ -97,7 +137,7 @@ class SpatialRegularStride(SpatialSampler):
 
     def get_config(self) -> dict[str, Any]:
         step = list(self.step) if not isinstance(self.step, int) else self.step
-        return {"step": step}
+        return {"step": step, "check_full_scan": self.check_full_scan}
 
 
 @dataclass(eq=False)

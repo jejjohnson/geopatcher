@@ -94,3 +94,66 @@ class TestSpatialExplicit:
         anchors = [(0, 0), (10, 5), (32, 16)]
         s = SpatialExplicit(anchors_=anchors)
         assert list(s.anchors(raster_domain, rect)) == anchors
+
+
+class TestCheckFullScan:
+    """`SpatialRegularStride(check_full_scan=True)` raises on partial tiles."""
+
+    def test_raster_exact_tiling_passes(
+        self, raster_domain: GeoTensor, rect: SpatialRectangular
+    ) -> None:
+        # 64 / 16 = 4 — exact, both axes.
+        s = SpatialRegularStride(step=16, check_full_scan=True)
+        anchors = list(s.anchors(raster_domain, rect))
+        assert len(anchors) == 16
+
+    def test_raster_partial_tile_raises(
+        self, raster_domain: GeoTensor, rect: SpatialRectangular
+    ) -> None:
+        from geopatcher import IncompleteScanConfiguration
+
+        # step=20 against (64, 64): (64 - 16) % 20 = 8 ≠ 0
+        s = SpatialRegularStride(step=20, check_full_scan=True)
+        with pytest.raises(IncompleteScanConfiguration, match="row"):
+            list(s.anchors(raster_domain, rect))
+
+    def test_grid_exact_tiling_passes(self) -> None:
+        grid = GridDomain(
+            coords={
+                "latitude": np.linspace(-30, 30, 24),
+                "longitude": np.linspace(0, 60, 36),
+            },
+        )
+        rect = SpatialRectangular(size=(6, 6))
+        s = SpatialRegularStride(step=(6, 6), check_full_scan=True)
+        anchors = list(s.anchors(grid, rect))
+        # Both axes: (24 - 6) / 6 + 1 = 4; (36 - 6) / 6 + 1 = 6 → 4 * 6 = 24
+        assert len(anchors) == 24
+
+    def test_grid_partial_tile_raises(self) -> None:
+        from geopatcher import IncompleteScanConfiguration
+
+        grid = GridDomain(
+            coords={
+                "latitude": np.linspace(-30, 30, 25),
+                "longitude": np.linspace(0, 60, 36),
+            },
+        )
+        rect = SpatialRectangular(size=(6, 6))
+        s = SpatialRegularStride(step=(6, 6), check_full_scan=True)
+        # (25 - 6) % 6 = 1 ≠ 0 on latitude
+        with pytest.raises(IncompleteScanConfiguration, match="latitude"):
+            list(s.anchors(grid, rect))
+
+    def test_default_off_preserves_silent_truncation(
+        self, raster_domain: GeoTensor, rect: SpatialRectangular
+    ) -> None:
+        # No flag → same behaviour as before: partial tile silently dropped.
+        s = SpatialRegularStride(step=20)
+        anchors = list(s.anchors(raster_domain, rect))
+        assert len(anchors) > 0  # no raise
+
+    def test_get_config_round_trip(self) -> None:
+        s = SpatialRegularStride(step=(6, 6), check_full_scan=True)
+        cfg = s.get_config()
+        assert cfg == {"step": [6, 6], "check_full_scan": True}

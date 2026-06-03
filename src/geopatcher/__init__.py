@@ -35,11 +35,13 @@ from geopatcher._src.domains import (
     RasterDomain,
     VectorDomain,
 )
+from geopatcher._src.exceptions import IncompleteScanConfiguration
 from geopatcher._src.fields import (
     AsyncRasterField,
     RasterField,
 )
 from geopatcher._src.hooks import PatcherHook
+from geopatcher._src.indexed import IndexedPatchView
 from geopatcher._src.journal import PatchJournal
 from geopatcher._src.patch import (
     Patch,
@@ -140,6 +142,8 @@ __all__ = [
     "Domain",
     "Field",
     "GridDomain",
+    "IncompleteScanConfiguration",
+    "IndexedPatchView",
     "Patch",
     "PatchErrorRecord",
     "PatchJournal",

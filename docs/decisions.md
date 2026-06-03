@@ -331,6 +331,105 @@ work); the upstream `neuralgcm/terrax` `xreader.stencils` module (Apache-2.0,
 
 ---
 
+## ADR-005 — Random access is a Sequence wrapper, cache lives on the view
+
+**Context.** The patcher's canonical surface is
+`SpatialPatcher.split → Iterator[Patch]` (ADR-001). xrpatcher's
+`XRDAPatcher[i]` API gives random-access by integer index, and `xrpatcher`
+also bundles in-memory caching (`cache=True`/`preload=True`) for ML
+loaders that re-read the same anchors per epoch. Migrants want the same
+ergonomics without losing the iterator-first contract; the question is
+*where* the random-access surface lives and *what protocol* it speaks.
+
+**Decision.** Add `geopatcher.IndexedPatchView`:
+
+- A stdlib `collections.abc.Sequence[Patch]` over a `(patcher, field)`
+  pair. Supports `len(view)`, `view[i]`, slicing, negative indexing,
+  `for p in view`.
+- No torch / Grain / jax dependency — `Sequence[Patch]` is the protocol.
+  Framework wrappers (`torch.utils.data.Dataset.__getitem__`,
+  `grain.RandomAccessDataSource.__getitem__`) are one-liners over the
+  view; the recipes demonstrate.
+- Constructor flags `cache=True`/`preload=True` mirror xrpatcher
+  one-for-one. The cache is indexed by integer (the simplest possible
+  scheme that matches xrpatcher). `preload=True` calls
+  `patch.data.load()` / `.compute()` via duck-typing — works for xarray
+  `DataArray`, dask arrays, and is a no-op for numpy.
+- The cache lives on the view, not on the patcher. Reason: a user can
+  have two views on the same patcher with different cache settings
+  (e.g. training with `preload=True`, eval with `cache=False`), and the
+  patcher itself stays a frozen value object.
+- The view materialises the anchor list at construction time
+  (`patcher.anchors(field)`) — no lazy re-walking on every `__getitem__`.
+
+Alongside the view, the PR ships three sympathetic conveniences:
+
+- `SpatialRegularStride(check_full_scan=True)` raises
+  `IncompleteScanConfiguration` at anchor time when `(length - size) %
+  step` is nonzero on any axis. Off by default to preserve existing
+  silent-truncation semantics; opt in for the xrpatcher
+  strict-tiling story. Spatial analogue of `divide_evenly` (ADR-004).
+- `XarrayField.coords_per_patch(patches)` returns one coord-only
+  `xr.Dataset` per patch (xrpatcher's `get_coords()` equivalent).
+- `SpatialPatcher.merge_to_xarray(patches, field)` returns a
+  `DataArray` with the original coords intact — wraps `merge` +
+  `field.with_data` so xrpatcher migrators don't have to discover the
+  two-step pattern.
+
+Precursor change: `XarrayField.select` now returns the bare
+`xarray.DataArray` rather than another `XarrayField`. This brings it in
+line with `RasterField.select → GeoTensor` (select returns the natural
+data payload, not another field wrapper) and unblocks
+`SpatialOverlapAdd.merge`, which `np.asarray`'s every patch's data.
+
+**Consequences.**
+
+- **Iterator-first split stays canonical.** ADR-001 is unchanged. The
+  view is a wrapper, not a replacement; consumers that prefer
+  iterators see no change.
+- **`from geopatcher import IndexedPatchView` works.** Root re-export
+  + `__all__` entry, alongside `SpatialPatcher`, `TimeStencil`, etc.
+- **No framework adapter packages.** Following the same stance as
+  ADR-004 and PRs #41 / #57, we ship primitives (the Sequence-shaped
+  view) plus recipes (one-line torch / Grain wrappers), not adapter
+  classes.
+- **Content-addressed cache is still future work.** This PR's
+  index-keyed in-memory cache is the cheap xrpatcher port; the deeper
+  cross-session content-addressed cache is tracked at #24. The
+  `IndexedPatchView` is the natural home for it.
+- **`xrpatcher` can be archived.** After this PR ships in a tagged
+  release, `XRDAPatcher` users can swap one import:
+  `XRDAPatcher(da, patches=..., strides=...)` →
+  `IndexedPatchView(SpatialPatcher(...), XarrayField(da))`. See
+  `recipes/xarray-nd-patching.md` for the side-by-side.
+
+**Alternatives considered.**
+
+- *Bundle a torch `Dataset` subclass in `geopatcher`.* Drags torch
+  into core deps for every user. Same primitives-not-adapters stance
+  the user took on jax and torch in PRs #11 / #23 (and the temporal
+  stencils work in #57).
+- *Put the cache on `SpatialPatcher` itself.* Conflates the patcher's
+  value-object identity with mutable per-loader state. A user with
+  one patcher + two loaders (train, eval) would have to re-construct
+  the patcher to vary cache settings.
+- *`view[i]` lazily walks the sampler each call.* Quadratic in
+  pathological samplers (random with replacement, Poisson-disk on
+  large domains). Materialising at construction is the standard
+  random-access trade-off.
+- *Flag `check_full_scan` on by default.* Breaking change — existing
+  pipelines that intentionally tile partially would start raising.
+  Opt-in matches the additive-only convention of the rest of the
+  framework.
+
+**See also.** GitHub issue #60 (the design doc and tracking issue for
+this work); the upstream `xrpatcher` (the migration target);
+[`recipes/xarray-nd-patching.md`](recipes/xarray-nd-patching.md) for
+side-by-side migration; #24 for the deeper content-addressed cache;
+ADR-001 (iterator-first split) and ADR-004 (coordinate-aware temporal).
+
+---
+
 ## How to add a decision
 
 1. Open a PR with the proposed addition. The PR description argues the
