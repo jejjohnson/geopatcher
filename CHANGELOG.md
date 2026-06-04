@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/jejjohnson/geopatcher/compare/v0.0.4...v0.0.5) (2026-06-03)
+
+
+### Features
+
+* **ml:** xrpatcher → geopatcher port (indexed view + cache + check_full_scan + xarray reconstruct) ([#61](https://github.com/jejjohnson/geopatcher/issues/61)) ([4afa248](https://github.com/jejjohnson/geopatcher/commit/4afa248f25846f442c2bba3530d42bbbedbe4c1a)), closes [#60](https://github.com/jejjohnson/geopatcher/issues/60)
+
 ## [0.0.4](https://github.com/jejjohnson/geopatcher/compare/v0.0.3...v0.0.4) (2026-06-03)
 
 
