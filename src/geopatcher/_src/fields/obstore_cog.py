@@ -50,7 +50,6 @@ import asyncio
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import numpy as np
 
@@ -107,8 +106,14 @@ def _require_async_tiff() -> Any:
 
 
 def _uri_path(uri: str) -> str:
-    """Return the path component used as the obstore object key."""
-    return urlsplit(uri).path.lstrip("/")
+    """Return the key inside the pooled store for ``uri``.
+
+    Delegates to `geopatcher._src.objstore.object_key`, which handles
+    the Azure case (container segment lives in the store, not the key).
+    """
+    from geopatcher._src.objstore import object_key
+
+    return object_key(uri)
 
 
 # ---------------------------------------------------------------------------
