@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
+from _helpers import ArrField as _ArrField
 
 from geopatcher import (
     PatcherHook,
@@ -16,17 +15,6 @@ from geopatcher import (
     SpatialRectangular,
     SpatialRegularStride,
 )
-
-
-@pytest.fixture
-def field() -> RasterField:
-    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
-    gt = GeoTensor(
-        values=arr,
-        transform=rasterio.Affine.identity(),
-        crs="EPSG:32630",
-    )
-    return RasterField(gt)
 
 
 @pytest.fixture
@@ -153,36 +141,6 @@ def test_protocol_is_public() -> None:
 # ---------------------------------------------------------------------------
 # Matched patchers — verify `hooks=` is plumbed through Phase 4 surfaces.
 # ---------------------------------------------------------------------------
-
-
-class _StubDomain:
-    @property
-    def crs(self) -> object:
-        return "EPSG:4326"
-
-    @property
-    def bounds(self) -> tuple[float, float, float, float]:
-        return (0.0, 0.0, 1.0, 1.0)
-
-
-class _ArrField:
-    """Minimal `Field` whose `select` returns a backing numpy array."""
-
-    def __init__(self, values: np.ndarray) -> None:
-        self._values = values
-        self._domain = _StubDomain()
-
-    @property
-    def domain(self) -> object:
-        return self._domain
-
-    def select(self, indexer: object) -> object:
-        if isinstance(indexer, slice):
-            return self._values[indexer]
-        return self._values
-
-    def with_data(self, array: object) -> object:
-        return array
 
 
 def test_matched_temporal_split_forwards_hooks() -> None:

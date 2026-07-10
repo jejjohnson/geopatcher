@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-import rasterio
+from _helpers import ArrayField
 
 from geopatcher import (
     SpatialBoxcar,
@@ -25,26 +25,6 @@ from geopatcher import (
     TemporalRegularStride,
 )
 from geopatcher.jax import batch_split, unbatch
-
-
-class ArrayField:
-    def __init__(self, array: np.ndarray) -> None:
-        self.array = array
-        self.shape = array.shape
-        self.transform = rasterio.Affine.identity()
-        self.crs = "EPSG:32630"
-
-    @property
-    def domain(self) -> ArrayField:
-        return self
-
-    def select(self, window: Any) -> np.ndarray:
-        rows = slice(int(window.row_off), int(window.row_off + window.height))
-        cols = slice(int(window.col_off), int(window.col_off + window.width))
-        return self.array[rows, cols]
-
-    def with_data(self, array: Any) -> ArrayField:
-        return ArrayField(np.asarray(array))
 
 
 class AsyncArrayField(ArrayField):

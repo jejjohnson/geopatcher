@@ -10,11 +10,11 @@ down per-source lockstep slicing without depending on georeader.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pytest
+from _helpers import StubDomain as _StubDomain
 
 from geopatcher._src.matched import (
     MatchedField,
@@ -37,18 +37,13 @@ from geopatcher._src.time.window import TemporalCausalBoxcar
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _StubDomain:
-    crs: str = "EPSG:4326"
-    bounds: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
-
-
 class _ArrField:
     """A `Field` whose `select(indexer)` returns a backing 3-D numpy chunk.
 
-    The first axis is time; the remaining two are H/W. ``select`` returns
-    the array unchanged so the matched spatial patcher's per-anchor reads
-    see the full time series at each spatial chip.
+    Deliberately NOT the shared `_helpers.ArrField`: ``select`` here
+    returns the array unchanged for *any* indexer (including slices) so
+    the matched spatial patcher's per-anchor reads see the full time
+    series at each spatial chip.
     """
 
     def __init__(self, values: np.ndarray) -> None:

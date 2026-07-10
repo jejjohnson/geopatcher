@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
 
 from geopatcher import (
     Patch,
@@ -42,18 +40,6 @@ from geopatcher import (
     TemporalRegularStride,
     stack_patches,
 )
-
-
-@pytest.fixture
-def field() -> RasterField:
-    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
-    return RasterField(
-        GeoTensor(
-            values=arr,
-            transform=rasterio.Affine.identity(),
-            crs="EPSG:32630",
-        )
-    )
 
 
 @pytest.fixture

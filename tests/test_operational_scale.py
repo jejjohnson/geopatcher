@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
 from rasterio.windows import Window
 
 from geopatcher import (
@@ -36,13 +34,8 @@ def _patch(values: np.ndarray) -> Patch:
 
 
 @pytest.fixture
-def field() -> RasterField:
-    gt = GeoTensor(
-        values=np.arange(16, dtype=np.float32).reshape(4, 4),
-        transform=rasterio.Affine.identity(),
-        crs="EPSG:32630",
-    )
-    return RasterField(gt)
+def field(raster_field_factory) -> RasterField:
+    return raster_field_factory(4)
 
 
 def test_patch_with_data_preserves_metadata() -> None:

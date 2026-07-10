@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
 
 from geopatcher import (
     Patch,
@@ -53,17 +51,9 @@ class FlakyRasterField:
         return self.wrapped.select(indices)
 
 
-@pytest.fixture
-def field() -> RasterField:
-    # 2-D so the (row, col) slicer from _resolve_indices matches the domain
-    # shape exactly. The 3-D channels-first case is exercised in test_ops.py.
-    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
-    gt = GeoTensor(
-        values=arr,
-        transform=rasterio.Affine.identity(),
-        crs="EPSG:32630",
-    )
-    return RasterField(gt)
+# The shared `field` fixture (tests/conftest.py) is 2-D so the (row, col)
+# slicer from _resolve_indices matches the domain shape exactly. The 3-D
+# channels-first case is exercised in test_ops.py.
 
 
 class TestSplit:

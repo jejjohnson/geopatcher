@@ -15,9 +15,8 @@ that exercise it just assert `NotImplementedError`.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
+from _helpers import StubField as _StubField
 
 import geopatcher.matched as matched_ns
 from geopatcher._src.matched import (
@@ -28,36 +27,6 @@ from geopatcher._src.matched import (
 from geopatcher._src.matched.patch import PRIMARY_KEY
 from geopatcher._src.patch import Patch
 from geopatcher._src.protocols import Field
-
-
-class _StubDomain:
-    """Minimal `Domain` for tests — bounds and CRS are never read here."""
-
-    @property
-    def crs(self) -> Any:
-        return "EPSG:4326"
-
-    @property
-    def bounds(self) -> tuple[float, float, float, float]:
-        return (0.0, 0.0, 1.0, 1.0)
-
-
-class _StubField:
-    """Minimal `Field` — `select` returns its name; `with_data` echoes."""
-
-    def __init__(self, name: str) -> None:
-        self._name = name
-        self._domain = _StubDomain()
-
-    @property
-    def domain(self) -> Any:
-        return self._domain
-
-    def select(self, indexer: Any) -> Any:
-        return f"{self._name}@{indexer}"
-
-    def with_data(self, array: Any) -> Any:
-        return array
 
 
 class TestReexports:
