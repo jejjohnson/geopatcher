@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 
 if TYPE_CHECKING:
@@ -79,6 +79,35 @@ class MatchedField:
     secondaries: Mapping[str, Field] = field(default_factory=dict)
     coreg: Mapping[str, CoregFn] = field(default_factory=dict)
     valid_mask: bool = True
+
+    # Carries live Field handles and coregistration callables, which
+    # are not reconstructable from config — mirror the
+    # `SpatialLearned` convention and forbid YAML round-trips.
+    forbid_in_yaml: ClassVar[bool] = True
+
+    def get_config(self) -> dict[str, Any]:
+        """Best-effort, JSON-able description of this composite field.
+
+        `Field` instances and coregistration callables are not
+        config-serializable (they carry live data handles / closures),
+        so each member is represented as a ``{"class": name}`` envelope
+        without a ``config`` payload — enough to identify the pipeline
+        shape, not enough to reconstruct it (hence
+        ``forbid_in_yaml = True``).
+
+        Returns:
+            Dict with the primary's class-name envelope, per-secondary
+            class-name envelopes keyed by member name, and the
+            ``valid_mask`` flag.
+        """
+        return {
+            "primary": {"class": type(self.primary).__name__},
+            "secondaries": {
+                name: {"class": type(f).__name__}
+                for name, f in self.secondaries.items()
+            },
+            "valid_mask": self.valid_mask,
+        }
 
     def __post_init__(self) -> None:
         # Avoid late-import cycle: `patch.py` imports from this module

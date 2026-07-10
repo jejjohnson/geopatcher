@@ -67,6 +67,153 @@ def _compute_valid_mask(data: Any) -> np.ndarray | None:
     return np.isfinite(arr)
 
 
+def _validate_aggregator_names(
+    secondary_aggregators: Mapping[str, Any],
+    mfield: MatchedField,
+    cls_name: str,
+) -> None:
+    """Reject typoed ``secondary_aggregators`` keys up front.
+
+    Without this guard, a typo like
+    ``secondary_aggregators={"s22": ...}`` would silently drop
+    every real ``"s2"`` patch and still call the typoed
+    aggregator with an empty list — producing a bogus
+    reconstructed field with no error.
+
+    Best-effort: if ``mfield`` doesn't expose ``secondaries``
+    (i.e. caller mistakenly passed a plain Field), the
+    type-error path in ``split`` / the empty-merge path will
+    surface that misuse — we don't double-fault here.
+
+    Args:
+        secondary_aggregators: The patcher's ``{name: aggregator}``
+            mapping to check.
+        mfield: The `MatchedField` whose ``secondaries`` names are
+            authoritative.
+        cls_name: Patcher class name interpolated into the error
+            message (``type(self).__name__`` at call sites).
+    """
+    secondaries = getattr(mfield, "secondaries", None)
+    if secondaries is None:
+        return
+    unknown = set(secondary_aggregators) - set(secondaries)
+    if unknown:
+        raise ValueError(
+            f"{cls_name}.secondary_aggregators has names "
+            "not in mfield.secondaries: "
+            f"{sorted(unknown)!r}. "
+            f"Known secondaries: {sorted(secondaries)!r}."
+        )
+
+
+def _check_matched_dict(data_by_name: Any, cls_name: str, expects: str) -> None:
+    """Validate the per-source dict shape produced by ``MatchedField.select``.
+
+    A plain `Field` fed to a matched patcher yields non-dict patch
+    data; surface that misuse here rather than an obscure `KeyError`
+    later.
+
+    Args:
+        data_by_name: Value expected to be a ``dict[str, data]``.
+        cls_name: Patcher class name interpolated into the error
+            message (``type(self).__name__`` at call sites).
+        expects: Phrase naming what was expected to carry the dict,
+            e.g. ``"each Patch.data to be"`` — interpolated verbatim
+            so each patcher keeps its historical message text.
+    """
+    from geopatcher._src.matched.patch import PRIMARY_KEY
+
+    if not isinstance(data_by_name, dict):
+        raise TypeError(
+            f"{cls_name}.split expects {expects} a dict[str, data] "
+            "(as produced by "
+            "MatchedField.select); got "
+            f"{type(data_by_name).__name__}. "
+            "Did you pass a plain Field instead of a MatchedField?"
+        )
+    if PRIMARY_KEY not in data_by_name:
+        raise ValueError(
+            f"MatchedField.select must include the primary key "
+            f"{PRIMARY_KEY!r}; got keys {sorted(data_by_name)!r}."
+        )
+
+
+def _compute_member_masks(
+    members: Mapping[str, Any], mfield: MatchedField
+) -> dict[str, np.ndarray] | None:
+    """Per-source validity masks for a matched patch's ``members``.
+
+    Args:
+        members: ``{name: patch}`` whose ``data`` attributes are masked.
+        mfield: The originating `MatchedField`; masks are only computed
+            when its ``valid_mask`` flag is truthy.
+
+    Returns:
+        ``{name: mask}`` for members whose data is numeric and
+        array-coercible, or None when masking is disabled or no member
+        produced a mask.
+    """
+    if not getattr(mfield, "valid_mask", False):
+        return None
+    mask_dict = {
+        name: mask
+        for name, patch in members.items()
+        if (mask := _compute_valid_mask(patch.data)) is not None
+    }
+    return mask_dict or None
+
+
+def _collect_per_source(
+    patches: Iterable[Any], secondary_names: Iterable[str]
+) -> dict[str, list[Any]]:
+    """Fan matched patches out into per-source patch lists in one pass.
+
+    Patches stream lazily — materialising ``{PRIMARY_KEY: [...],
+    name: [...]}`` in a single pass avoids iterating ``patches``
+    N+1 times. Member names not in ``secondary_names`` are dropped
+    (the documented opt-out for "don't reconstruct this source").
+
+    Args:
+        patches: Iterable of matched patch carriers (anything with a
+            per-source ``members`` mapping).
+        secondary_names: Secondary names to collect, typically the
+            patcher's ``secondary_aggregators`` keys.
+    """
+    from geopatcher._src.matched.patch import PRIMARY_KEY
+
+    per_source: dict[str, list[Any]] = {PRIMARY_KEY: []}
+    for name in secondary_names:
+        per_source[name] = []
+    for mp in patches:
+        for name, patch in mp.members.items():
+            if name in per_source:
+                per_source[name].append(patch)
+    return per_source
+
+
+def _matched_patcher_config(
+    primary: Any, secondary_aggregators: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Shared ``get_config`` body for the matched patcher family.
+
+    Follows the patcher-family envelope convention: nested components
+    serialize as ``{"class": type(x).__name__, "config": x.get_config()}``.
+    """
+    return {
+        "primary": {
+            "class": type(primary).__name__,
+            "config": primary.get_config(),
+        },
+        "secondary_aggregators": {
+            name: {
+                "class": type(agg).__name__,
+                "config": agg.get_config(),
+            }
+            for name, agg in secondary_aggregators.items()
+        },
+    }
+
+
 @dataclass(eq=False)
 class MatchedSpatialPatcher:
     """Spatial patcher that yields `MatchedPatch`es and merges per-source.
@@ -89,31 +236,9 @@ class MatchedSpatialPatcher:
         default_factory=dict
     )
 
-    def _validate_aggregator_names(self, mfield: MatchedField) -> None:
-        """Reject typoed `secondary_aggregators` keys up front.
-
-        Without this guard, a typo like
-        ``secondary_aggregators={"s22": ...}`` would silently drop
-        every real ``"s2"`` patch and still call the typoed
-        aggregator with an empty list — producing a bogus
-        reconstructed field with no error.
-
-        Best-effort: if ``mfield`` doesn't expose ``secondaries``
-        (i.e. caller mistakenly passed a plain Field), the
-        type-error path in ``split`` / the empty-merge path will
-        surface that misuse — we don't double-fault here.
-        """
-        secondaries = getattr(mfield, "secondaries", None)
-        if secondaries is None:
-            return
-        unknown = set(self.secondary_aggregators) - set(secondaries)
-        if unknown:
-            raise ValueError(
-                "MatchedSpatialPatcher.secondary_aggregators has names "
-                "not in mfield.secondaries: "
-                f"{sorted(unknown)!r}. "
-                f"Known secondaries: {sorted(secondaries)!r}."
-            )
+    def get_config(self) -> dict[str, Any]:
+        """Serialize the inner primary patcher + per-secondary aggregators."""
+        return _matched_patcher_config(self.primary, self.secondary_aggregators)
 
     def split(
         self,
@@ -147,31 +272,20 @@ class MatchedSpatialPatcher:
                 lifecycle; matched-specific bookkeeping does not emit
                 additional events.
         """
-        from geopatcher._src.matched.patch import PRIMARY_KEY, MatchedPatch
+        from geopatcher._src.matched.patch import MatchedPatch
         from geopatcher._src.patch import Patch
 
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
 
         for outer in self.primary.split(mfield, hooks=hooks):
             data_by_name = outer.data
-            if not isinstance(data_by_name, dict):
-                # Belt-and-braces: a SpatialPatcher fed a plain Field
-                # would give us a non-dict here. MatchedSpatialPatcher
-                # is documented to expect a MatchedField; surface the
-                # misuse rather than producing an obscure KeyError
-                # later.
-                raise TypeError(
-                    "MatchedSpatialPatcher.split expects each Patch.data "
-                    "to be a dict[str, data] (as produced by "
-                    "MatchedField.select); got "
-                    f"{type(data_by_name).__name__}. "
-                    "Did you pass a plain Field instead of a MatchedField?"
-                )
-            if PRIMARY_KEY not in data_by_name:
-                raise ValueError(
-                    f"MatchedField.select must include the primary key "
-                    f"{PRIMARY_KEY!r}; got keys {sorted(data_by_name)!r}."
-                )
+            # Belt-and-braces: a SpatialPatcher fed a plain Field
+            # would give us a non-dict here.
+            _check_matched_dict(
+                data_by_name, type(self).__name__, "each Patch.data to be"
+            )
             members = {
                 name: Patch(
                     data=data,
@@ -181,15 +295,7 @@ class MatchedSpatialPatcher:
                 )
                 for name, data in data_by_name.items()
             }
-            if mfield.valid_mask:
-                mask_dict = {
-                    name: mask
-                    for name, data in data_by_name.items()
-                    if (mask := _compute_valid_mask(data)) is not None
-                }
-                valid_mask: dict[str, np.ndarray] | None = mask_dict or None
-            else:
-                valid_mask = None
+            valid_mask = _compute_member_masks(members, mfield)
             yield MatchedPatch(
                 anchor=outer.anchor,
                 members=members,
@@ -252,17 +358,11 @@ class MatchedSpatialPatcher:
         from geopatcher._src.matched.patch import PRIMARY_KEY
         from geopatcher._src.spatial.aggregation import _warn_if_unsafe_streaming
 
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
 
-        # Patches stream lazily — materialise the per-source lists
-        # in one pass so we don't iterate `patches` N+1 times.
-        per_source: dict[str, list[Any]] = {PRIMARY_KEY: []}
-        for name in self.secondary_aggregators:
-            per_source[name] = []
-        for mp in patches:
-            for name, patch in mp.members.items():
-                if name in per_source:
-                    per_source[name].append(patch)
+        per_source = _collect_per_source(patches, self.secondary_aggregators)
 
         primary_domain = mfield.domain
         result: dict[str, Any] = {
@@ -308,19 +408,9 @@ class MatchedTemporalPatcher:
         default_factory=dict
     )
 
-    def _validate_aggregator_names(self, mfield: MatchedField) -> None:
-        """Reject typoed `secondary_aggregators` keys up front."""
-        secondaries = getattr(mfield, "secondaries", None)
-        if secondaries is None:
-            return
-        unknown = set(self.secondary_aggregators) - set(secondaries)
-        if unknown:
-            raise ValueError(
-                "MatchedTemporalPatcher.secondary_aggregators has names "
-                "not in mfield.secondaries: "
-                f"{sorted(unknown)!r}. "
-                f"Known secondaries: {sorted(secondaries)!r}."
-            )
+    def get_config(self) -> dict[str, Any]:
+        """Serialize the inner primary patcher + per-secondary aggregators."""
+        return _matched_patcher_config(self.primary, self.secondary_aggregators)
 
     def split(
         self,
@@ -359,21 +449,14 @@ class MatchedTemporalPatcher:
         )
         from geopatcher._src.patch import TemporalPatch
 
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
 
         data_by_name = mfield.select(slice(None))
-        if not isinstance(data_by_name, dict):
-            raise TypeError(
-                "MatchedTemporalPatcher.split expects mfield.select to return "
-                "a dict[str, data] (as produced by MatchedField.select); got "
-                f"{type(data_by_name).__name__}. "
-                "Did you pass a plain Field instead of a MatchedField?"
-            )
-        if PRIMARY_KEY not in data_by_name:
-            raise ValueError(
-                f"MatchedField.select must include the primary key "
-                f"{PRIMARY_KEY!r}; got keys {sorted(data_by_name)!r}."
-            )
+        _check_matched_dict(
+            data_by_name, type(self).__name__, "mfield.select to return"
+        )
 
         arrays = {name: np.asarray(data) for name, data in data_by_name.items()}
         primary_arr = arrays[PRIMARY_KEY]
@@ -391,15 +474,7 @@ class MatchedTemporalPatcher:
                 )
                 for name, arr in arrays.items()
             }
-            if getattr(mfield, "valid_mask", False):
-                mask_dict = {
-                    name: mask
-                    for name, patch in members.items()
-                    if (mask := _compute_valid_mask(patch.data)) is not None
-                }
-                valid_mask: dict[str, np.ndarray] | None = mask_dict or None
-            else:
-                valid_mask = None
+            valid_mask = _compute_member_masks(members, mfield)
             yield MatchedTemporalPatch(
                 anchor=primary_patch.anchor,
                 members=members,
@@ -446,15 +521,11 @@ class MatchedTemporalPatcher:
         """
         from geopatcher._src.matched.patch import PRIMARY_KEY
 
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
 
-        per_source: dict[str, list[Any]] = {PRIMARY_KEY: []}
-        for name in self.secondary_aggregators:
-            per_source[name] = []
-        for mp in patches:
-            for name, patch in mp.members.items():
-                if name in per_source:
-                    per_source[name].append(patch)
+        per_source = _collect_per_source(patches, self.secondary_aggregators)
 
         result: dict[str, Any] = {
             PRIMARY_KEY: self.primary.merge(per_source[PRIMARY_KEY], hooks=hooks),
@@ -489,19 +560,9 @@ class MatchedSpatioTemporalPatcher:
         default_factory=dict
     )
 
-    def _validate_aggregator_names(self, mfield: MatchedField) -> None:
-        """Reject typoed `secondary_aggregators` keys up front."""
-        secondaries = getattr(mfield, "secondaries", None)
-        if secondaries is None:
-            return
-        unknown = set(self.secondary_aggregators) - set(secondaries)
-        if unknown:
-            raise ValueError(
-                "MatchedSpatioTemporalPatcher.secondary_aggregators has names "
-                "not in mfield.secondaries: "
-                f"{sorted(unknown)!r}. "
-                f"Known secondaries: {sorted(secondaries)!r}."
-            )
+    def get_config(self) -> dict[str, Any]:
+        """Serialize the inner primary patcher + per-secondary aggregators."""
+        return _matched_patcher_config(self.primary, self.secondary_aggregators)
 
     def split(
         self,
@@ -524,7 +585,9 @@ class MatchedSpatioTemporalPatcher:
                 callers see the matched-level lifecycle rather than the
                 interleaved single-source dispatch.
         """
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
         coupling = self.primary.coupling
         hook_list = _as_hooks(hooks)
         if not hook_list:
@@ -565,7 +628,9 @@ class MatchedSpatioTemporalPatcher:
 
         for sp in spatial.split(mfield):
             data_by_name = sp.data
-            self._check_dict(data_by_name)
+            _check_matched_dict(
+                data_by_name, type(self).__name__, "each spatial Patch.data to be"
+            )
             arrays = {name: np.asarray(d) for name, d in data_by_name.items()}
             primary_arr = arrays[PRIMARY_KEY]
             time_len = int(primary_arr.shape[time_axis])
@@ -591,7 +656,7 @@ class MatchedSpatioTemporalPatcher:
                             )
                             for name, arr in arrays.items()
                         }
-                        valid_mask = self._compute_member_masks(members, mfield)
+                        valid_mask = _compute_member_masks(members, mfield)
                         matched = MatchedSpatioTemporalPatch(
                             space=sp.anchor,
                             time=int(t_anchor),
@@ -642,7 +707,9 @@ class MatchedSpatioTemporalPatcher:
             try:
                 indices = spatial.geometry.neighborhood(mfield.domain, space_anchor)
                 data_by_name = mfield.select(indices)
-                self._check_dict(data_by_name)
+                _check_matched_dict(
+                    data_by_name, type(self).__name__, "each spatial Patch.data to be"
+                )
                 arrays = {name: np.asarray(d) for name, d in data_by_name.items()}
                 primary_arr = arrays[PRIMARY_KEY]
                 time_len = int(primary_arr.shape[time_axis])
@@ -671,7 +738,7 @@ class MatchedSpatioTemporalPatcher:
                         )
                         for name, arr in arrays.items()
                     }
-                    valid_mask = self._compute_member_masks(members, mfield)
+                    valid_mask = _compute_member_masks(members, mfield)
                     matched = MatchedSpatioTemporalPatch(
                         space=space_anchor,
                         time=int(time_anchor),
@@ -689,37 +756,6 @@ class MatchedSpatioTemporalPatcher:
                     _nbytes(matched.members[PRIMARY_KEY].data),
                 )
                 yield matched
-
-    @staticmethod
-    def _check_dict(data_by_name: Any) -> None:
-        from geopatcher._src.matched.patch import PRIMARY_KEY
-
-        if not isinstance(data_by_name, dict):
-            raise TypeError(
-                "MatchedSpatioTemporalPatcher.split expects each spatial "
-                "Patch.data to be a dict[str, data] (as produced by "
-                "MatchedField.select); got "
-                f"{type(data_by_name).__name__}. "
-                "Did you pass a plain Field instead of a MatchedField?"
-            )
-        if PRIMARY_KEY not in data_by_name:
-            raise ValueError(
-                f"MatchedField.select must include the primary key "
-                f"{PRIMARY_KEY!r}; got keys {sorted(data_by_name)!r}."
-            )
-
-    @staticmethod
-    def _compute_member_masks(
-        members: dict[str, Any], mfield: MatchedField
-    ) -> dict[str, np.ndarray] | None:
-        if not getattr(mfield, "valid_mask", False):
-            return None
-        mask_dict = {
-            name: mask
-            for name, patch in members.items()
-            if (mask := _compute_valid_mask(patch.data)) is not None
-        }
-        return mask_dict or None
 
     def merge(
         self,
@@ -747,7 +783,9 @@ class MatchedSpatioTemporalPatcher:
         from geopatcher._src.patch import TemporalPatch
         from geopatcher._src.spatial_time import _hashable
 
-        self._validate_aggregator_names(mfield)
+        _validate_aggregator_names(
+            self.secondary_aggregators, mfield, type(self).__name__
+        )
 
         hook_list = _as_hooks(hooks)
         _dispatch(hook_list, "on_merge_start", _len_or_unknown(patches))
