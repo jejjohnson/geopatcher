@@ -18,6 +18,8 @@ cache-on-view-not-on-patcher).
 from __future__ import annotations
 
 import dataclasses
+import threading
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, overload
@@ -34,6 +36,13 @@ class IndexedPatchView(Sequence[Patch]):
     indexing. The patches are bit-identical to those `patcher.split(field)`
     yields for the same anchor.
 
+    Cache accesses are guarded by a `threading.Lock`, so a view shared
+    across threads (e.g. a torch DataLoader with ``num_workers=0`` plus
+    background threads) is safe. Note that a torch DataLoader with
+    ``num_workers > 0`` forks worker *processes*: each worker gets its
+    own process-local copy of this view, and therefore its own cache —
+    entries are not shared back to the parent.
+
     Args:
         patcher: A patcher exposing ``anchors(field) -> list`` and
             ``patch_at(field, anchor) -> Patch``. `SpatialPatcher`
@@ -47,18 +56,32 @@ class IndexedPatchView(Sequence[Patch]):
             numpy passthrough) before caching, so cached entries are
             fully in RAM rather than lazy views. Requires
             ``cache=True``. Mirrors xrpatcher's ``preload=True``.
+        cache_size: Optional LRU bound on the number of cached patches.
+            ``None`` (default) keeps the cache unbounded, matching
+            xrpatcher's behaviour. Requires ``cache=True``.
     """
 
     patcher: Any
     field: Any
     cache: bool = False
     preload: bool = False
+    cache_size: int | None = None
     _anchors: list[Any] = field(default_factory=list, init=False, repr=False)
-    _cache: dict[int, Patch] = field(default_factory=dict, init=False, repr=False)
+    _cache: OrderedDict[int, Patch] = field(
+        default_factory=OrderedDict, init=False, repr=False
+    )
+    _cache_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.preload and not self.cache:
             raise ValueError("preload=True requires cache=True.")
+        if self.cache_size is not None:
+            if not self.cache:
+                raise ValueError("cache_size requires cache=True.")
+            if self.cache_size < 1:
+                raise ValueError("cache_size must be >= 1 (or None for unbounded).")
         anchors = getattr(self.patcher, "anchors", None)
         patch_at = getattr(self.patcher, "patch_at", None)
         if anchors is None or patch_at is None:
@@ -88,13 +111,27 @@ class IndexedPatchView(Sequence[Patch]):
             raise IndexError(
                 f"IndexedPatchView index {idx} out of range [0, {len(self._anchors)})"
             )
-        if self.cache and i in self._cache:
-            return self._cache[i]
+        if self.cache:
+            with self._cache_lock:
+                cached = self._cache.get(i)
+                if cached is not None:
+                    self._cache.move_to_end(i)
+                    return cached
         patch = self.patcher.patch_at(self.field, self._anchors[i])
         if self.cache:
             if self.preload:
                 patch = _materialise(patch)
-            self._cache[i] = patch
+            with self._cache_lock:
+                # Two threads may race to build the same index; keep the
+                # first stored entry so repeated reads return one object.
+                existing = self._cache.get(i)
+                if existing is not None:
+                    self._cache.move_to_end(i)
+                    return existing
+                self._cache[i] = patch
+                if self.cache_size is not None:
+                    while len(self._cache) > self.cache_size:
+                        self._cache.popitem(last=False)
         return patch
 
     @property
@@ -109,7 +146,8 @@ class IndexedPatchView(Sequence[Patch]):
 
     def clear_cache(self) -> None:
         """Drop any cached patches; subsequent reads go back through `patch_at`."""
-        self._cache.clear()
+        with self._cache_lock:
+            self._cache.clear()
 
 
 def _materialise(patch: Patch) -> Patch:

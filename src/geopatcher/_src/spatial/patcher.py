@@ -7,11 +7,13 @@ caller asks. Split returns an `Iterator[Patch]` so streaming is the
 default; ``list(patcher.split(field))`` materialises eagerly when that's
 what's wanted.
 
-See ``design.md`` §1 for the four-axis framework.
+See ``docs/concepts.md`` ("The four-axis abstraction") for the
+four-axis framework.
 """
 
 from __future__ import annotations
 
+import sys
 import traceback
 from asyncio import BoundedSemaphore as AsyncBoundedSemaphore, to_thread
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
@@ -128,7 +130,17 @@ class SpatialPatcher:
         max_in_flight: int | None = None,
         max_in_flight_bytes: int | None = None,
     ) -> Iterator[Patch]:
-        """Yield patches lazily — one per anchor placed by the sampler."""
+        """Yield patches lazily — one per anchor placed by the sampler.
+
+        When ``max_in_flight`` / ``max_in_flight_bytes`` bound the number
+        of outstanding patches, each yielded patch owns one backpressure
+        slot until it is released. Consumers must release promptly by
+        calling ``patch.close()`` (or using each patch as a context
+        manager: ``with patch: ...``). A garbage-collection finalizer
+        returns leaked slots eventually, but it is a safety net, not the
+        mechanism — relying on it can stall this iterator until the
+        collector runs.
+        """
         _validate_backpressure(max_in_flight, max_in_flight_bytes)
         return prefetch_iterable(
             self._split(
@@ -238,7 +250,13 @@ class SpatialPatcher:
         max_in_flight: int | None = None,
         max_in_flight_bytes: int | None = None,
     ) -> AsyncIterator[Patch]:
-        """Async mirror of `split` over an `AsyncField`."""
+        """Async mirror of `split` over an `AsyncField`.
+
+        The ``max_in_flight`` / ``max_in_flight_bytes`` slot-ownership
+        contract matches `split`: close each yielded patch promptly
+        (``patch.close()`` or ``with patch: ...``); the finalizer-based
+        release on garbage collection is a safety net, not the mechanism.
+        """
         _validate_backpressure(max_in_flight, max_in_flight_bytes)
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
@@ -549,6 +567,14 @@ class AsyncSpatialPatcher:
         max_in_flight: int | None = None,
         max_in_flight_bytes: int | None = None,
     ) -> AsyncIterator[Patch]:
+        """Yield patches lazily over an `AsyncField`.
+
+        The ``max_in_flight`` / ``max_in_flight_bytes`` slot-ownership
+        contract matches `SpatialPatcher.split`: close each yielded
+        patch promptly (``patch.close()`` or ``with patch: ...``); the
+        finalizer-based release on garbage collection is a safety net,
+        not the mechanism.
+        """
         _validate_backpressure(max_in_flight, max_in_flight_bytes)
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
@@ -862,7 +888,10 @@ class _ByteBudget:
                 f"patch uses {nbytes} bytes, exceeding max_in_flight_bytes={self.limit}"
             )
         if self.limit is None:
-            self.used += nbytes
+            # Still take the lock: `release` runs on consumer threads,
+            # so unbounded budgets must not mutate `used` unlocked.
+            with self._condition:
+                self.used += nbytes
             return nbytes
         with self._condition:
             while self.used + nbytes > self.limit:
@@ -886,9 +915,16 @@ def _acquire_backpressure(
         return None
 
     def release() -> None:
-        if slots is not None:
-            slots.release()
-        byte_budget.release(nbytes)
+        try:
+            if slots is not None:
+                slots.release()
+            byte_budget.release(nbytes)
+        except Exception:
+            # A finalizer-driven release during interpreter shutdown can
+            # hit already-torn-down synchronisation primitives; swallow
+            # only in that case so real bugs still surface.
+            if not sys.is_finalizing():
+                raise
 
     return release
 
@@ -905,9 +941,15 @@ async def _acquire_backpressure_async(
         return None
 
     def release() -> None:
-        if slots is not None:
-            slots.release()
-        byte_budget.release(nbytes)
+        try:
+            if slots is not None:
+                slots.release()
+            byte_budget.release(nbytes)
+        except Exception:
+            # See the sync twin: swallow only shutdown-time teardown
+            # failures from a finalizer-driven release.
+            if not sys.is_finalizing():
+                raise
 
     return release
 

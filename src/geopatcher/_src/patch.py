@@ -8,18 +8,71 @@ edges or mark interior pixels (e.g. for `PolygonIntersection`).
 The fields are intentionally type-erased (`Any`) at the carrier level -
 the type-narrowing happens per (Geometry x Domain) pairing, captured by
 the `Patch[AnchorT, IndicesT, DataT]` generic parameters in user code.
-See `examples.md` §Summary for the table.
+See ``docs/patching.md`` (Geometry x Domain dispatch) for the table.
 """
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Self
+
+
+class _ReleaseLifecycleMixin:
+    """Shared release-slot lifecycle for the patch carriers.
+
+    A patcher's ``split(..., max_in_flight=...)`` attaches a release
+    callback (via the ``_release`` field) to each patch it yields, so
+    the patch owns exactly one backpressure slot. This mixin centralises
+    the machinery that hands the slot back:
+
+    - `close` (or ``with patch: ...``) is the primary, deterministic
+      path. It is idempotent — a double close is a no-op.
+    - Assigning ``_release`` registers a `weakref.finalize` safety net,
+      so a patch dropped without `close` still frees its slot when it
+      is garbage-collected. Unlike ``__del__``, a finalizer also fires
+      reliably for instances caught in reference cycles and runs at
+      interpreter exit before module teardown.
+
+    The finalizer is a safety net, not the mechanism: consumers should
+    close patches promptly, otherwise backpressure slots are returned
+    only at the collector's leisure and the producing iterator may stall.
+    """
+
+    _release: Callable[[], None] | None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_release":
+            finalizer = self.__dict__.pop("_release_finalizer", None)
+            if finalizer is not None:
+                finalizer.detach()
+            if value is not None:
+                object.__setattr__(
+                    self, "_release_finalizer", weakref.finalize(self, value)
+                )
+        object.__setattr__(self, name, value)
+
+    def close(self) -> None:
+        """Release any iterator backpressure slot held by this patch.
+
+        Idempotent: the first call hands the slot back and detaches the
+        garbage-collection finalizer; later calls are no-ops.
+        """
+        release = self._release
+        self._release = None  # Detaches the finalizer via ``__setattr__``.
+        if release is not None:
+            release()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 @dataclass(eq=False)
-class Patch[AnchorT, IndicesT, DataT]:
+class Patch[AnchorT, IndicesT, DataT](_ReleaseLifecycleMixin):
     """A single patch produced by a `SpatialPatcher`.
 
     Args:
@@ -45,24 +98,9 @@ class Patch[AnchorT, IndicesT, DataT]:
         """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
 
-    def close(self) -> None:
-        """Release any iterator backpressure slot held by this patch."""
-        release, self._release = self._release, None
-        if release is not None:
-            release()
-
-    def __enter__(self) -> Patch[AnchorT, IndicesT, DataT]:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.close()
-
-    def __del__(self) -> None:
-        self.close()
-
 
 @dataclass(eq=False)
-class TemporalPatch[AnchorT, IndicesT, DataT]:
+class TemporalPatch[AnchorT, IndicesT, DataT](_ReleaseLifecycleMixin):
     """A single patch produced by a `TemporalPatcher`.
 
     Mirrors `Patch` but indexes along the time axis only.
@@ -80,24 +118,9 @@ class TemporalPatch[AnchorT, IndicesT, DataT]:
         """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
 
-    def close(self) -> None:
-        """Release any iterator backpressure slot held by this patch."""
-        release, self._release = self._release, None
-        if release is not None:
-            release()
-
-    def __enter__(self) -> TemporalPatch[AnchorT, IndicesT, DataT]:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.close()
-
-    def __del__(self) -> None:
-        self.close()
-
 
 @dataclass(eq=False)
-class SpatioTemporalPatch:
+class SpatioTemporalPatch(_ReleaseLifecycleMixin):
     """A patch carrying both a spatial and a temporal anchor.
 
     Produced by `SpatioTemporalPatcher`. The data field is the
@@ -117,18 +140,3 @@ class SpatioTemporalPatch:
     def with_data(self, data: Any) -> SpatioTemporalPatch:
         """Return a data-replaced copy that does not own this patch's release slot."""
         return replace(self, data=data, _release=None)
-
-    def close(self) -> None:
-        """Release any iterator backpressure slot held by this patch."""
-        release, self._release = self._release, None
-        if release is not None:
-            release()
-
-    def __enter__(self) -> SpatioTemporalPatch:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.close()
-
-    def __del__(self) -> None:
-        self.close()
