@@ -5,14 +5,21 @@ Public surface re-exports:
 - Carriers: `Patch`, `TemporalPatch`, `SpatioTemporalPatch`.
 - Protocols: `Field`, `AsyncField`, `Domain`.
 - Concrete domains: `RasterDomain`, `GridDomain`, `VectorDomain`, `PointDomain`.
-- Field adapters: `RasterField`, `AsyncRasterField`. Non-raster adapters
-  (`XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`, `DaskField`) live
-  under `geopatcher.fields` and lazy-import their optional extras.
+- Field adapters: `RasterField`, `AsyncRasterField`. Optional adapters
+  (`XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`,
+  `DaskField`, `ObstoreCogField`) resolve lazily here and under
+  `geopatcher.fields`, importing their extras on first access.
 - Top-level patchers: `SpatialPatcher`, `AsyncSpatialPatcher`,
   `TemporalPatcher`, `SpatioTemporalPatcher`.
-- Observability: `PatcherHook` callback protocol.
+- ML / random access: `IndexedPatchView`, `stack_patches`.
+- Observability: `PatcherHook` callback protocol, `PatchJournal`,
+  `PatchErrorRecord`, `get_strict` / `set_strict`,
+  `IncompleteScanConfiguration`.
 - Spatial axes: re-exported from `geopatcher.spatial`.
-- Temporal axes: re-exported from `geopatcher.time`.
+- Temporal axes + stencils: re-exported from `geopatcher.time`
+  (`Stencil`, `TimeStencil`, `Closed`, ...).
+- Matched multi-source patching: `geopatcher.matched` (kept off the
+  root namespace by ADR design).
 
 Operator-graph wrappers (`GridSampler`, `ApplyToChips`, `Stitch`) that bridge
 the patcher into the `pipekit` composition framework live in the optional
@@ -101,6 +108,7 @@ from geopatcher._src.spatial import (  # re-export of all spatial concretes + ba
 from geopatcher._src.spatial_time import SpatioTemporalPatcher
 from geopatcher._src.stacking import stack_patches
 from geopatcher._src.time import (  # re-export of all temporal concretes + bases
+    Closed,
     Stencil,
     TemporalAggregation,
     TemporalCausalBoxcar,
@@ -139,11 +147,13 @@ __all__ = [
     "AsyncField",
     "AsyncRasterField",
     "AsyncSpatialPatcher",
+    "Closed",
     "Domain",
     "Field",
     "GridDomain",
     "IncompleteScanConfiguration",
     "IndexedPatchView",
+    "ObstoreCogField",
     "Patch",
     "PatchErrorRecord",
     "PatchJournal",
@@ -245,6 +255,7 @@ def __getattr__(name: str):
         "XvecField",
         "RioXarrayField",
         "DaskField",
+        "ObstoreCogField",
     }:
         return getattr(fields, name)
     raise AttributeError(name)
