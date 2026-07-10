@@ -25,7 +25,7 @@ will work once `pipekit` reaches PyPI.
 ## Common Commands
 
 ```bash
-make install              # Install all deps (uv sync --all-groups) + pre-commit hooks
+make install              # Install all deps (uv sync --all-groups --all-extras) + pre-commit hooks
 make test                 # Run tests: uv run pytest -v
 make format               # Auto-fix: ruff format . && ruff check --fix .
 make lint                 # Lint code: ruff check .
@@ -55,21 +55,37 @@ uv run --group typecheck ty check src/geopatcher  # Typecheck — package only
 
 ### Package structure
 
-All implementation lives in `src/geopatcher/_src/`. The public API is
-re-exported through `src/geopatcher/__init__.py`. The `_src` layer is
-private and may be rearranged without notice.
+The framework core lives in the private `src/geopatcher/_src/` layer,
+which may be rearranged without notice. The public API is re-exported
+through `src/geopatcher/__init__.py` and thin public alias modules
+(`fields.py`, `spatial.py`, `time.py`, `matched.py`, `hooks.py`). A
+small, deliberate integration layer also sits at the package top level
+outside `_src`: `runners.py` (reference executors, `parallel_map`),
+`dask.py` (delayed / bag helpers), `jax/` (`BatchedPatch` batching),
+and `integrations/pipekit.py` (operator-graph bridge). Invariant: core
+logic in `_src`, only thin aliases and extras-gated integrations at the
+top level.
 
-Layout:
+`_src` layout:
 
 | Path                                  | Purpose                                                |
 | ------------------------------------- | ------------------------------------------------------ |
 | `src/geopatcher/_src/patch.py`        | `Patch` / `TemporalPatch` / `SpatioTemporalPatch` carriers |
 | `src/geopatcher/_src/protocols.py`    | `Field` / `AsyncField` / `Domain` Protocols            |
 | `src/geopatcher/_src/domains.py`      | `GridDomain` / `VectorDomain` / `PointDomain` (`RasterDomain` re-exported from `georeader`) |
-| `src/geopatcher/_src/fields/`         | `RasterField` + extras-gated `XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField` |
+| `src/geopatcher/_src/fields/`         | `RasterField` + extras-gated `XarrayField`, `GeoPandasField`, `XvecField`, `RioXarrayField`, `DaskField`, `ObstoreCogField` |
 | `src/geopatcher/_src/spatial/`        | `SpatialPatcher` + the four spatial axes               |
-| `src/geopatcher/_src/time/`           | `TemporalPatcher` + the four temporal axes             |
+| `src/geopatcher/_src/time/`           | `TemporalPatcher` + the four temporal axes + stencils  |
 | `src/geopatcher/_src/spatial_time.py` | `SpatioTemporalPatcher` (product / coupled coupling)   |
+| `src/geopatcher/_src/matched/`        | `MatchedField` + matched carriers / patchers (multi-source) |
+| `src/geopatcher/_src/config.py`       | `get_strict` / `set_strict` strictness toggle          |
+| `src/geopatcher/_src/exceptions.py`   | `IncompleteScanConfiguration`                          |
+| `src/geopatcher/_src/hooks.py`        | `PatcherHook` callback protocol + dispatch             |
+| `src/geopatcher/_src/indexed.py`      | `IndexedPatchView` random-access Sequence wrapper      |
+| `src/geopatcher/_src/journal.py`      | `PatchJournal` resumable-job journal                   |
+| `src/geopatcher/_src/prefetch.py`     | `prefetch_iterable` background prefetching             |
+| `src/geopatcher/_src/stacking.py`     | `stack_patches`                                        |
+| `src/geopatcher/_src/objstore.py`     | Pooled obstore clients for `ObstoreCogField`           |
 
 ### Key directories
 
@@ -83,10 +99,11 @@ Layout:
 
 ## Documentation Examples
 
-Example notebooks live in `docs/notebooks/`. The tutorial notebooks
-import `from geotoolz import Sequential, Lambda` (the operator-graph
-bridge) to illustrate end-to-end pipelines — `geotoolz` is a soft
-prerequisite for re-executing those notebooks. The committed `.ipynb`
+Example notebooks live in `docs/notebooks/`. The committed tutorial
+(`patcher_lake_tahoe.ipynb`) imports only `import geopatcher as gp`
+plus numpy / matplotlib / pystac-client / planetary-computer /
+rioxarray — it has no `geotoolz` dependency; those extra libraries are
+the soft prerequisites for re-executing it. The committed `.ipynb`
 files are pre-executed; `mkdocs-jupyter` renders them with
 `execute: false`.
 

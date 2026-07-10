@@ -57,8 +57,13 @@ nav:
       - Patching (legacy): patching.md
       - Observability hooks: observability.md
       - Async and prefetch: patching/async-prefetch.md
-  - API reference: api/reference.md
-  - Design decisions: decisions.md
+  - API reference:
+      - Core framework: api/reference.md
+      - Matched multi-source: api/matched.md
+      - Integrations: api/integrations.md
+  - Design:
+      - Design decisions: decisions.md
+      - Query → matchup → patch: design/query-matchup.md
   - Contributing: contributing.md
 
 markdown_extensions:

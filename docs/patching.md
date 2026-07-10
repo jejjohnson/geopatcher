@@ -90,6 +90,7 @@ the thin `RasterField` adapter; the non-raster Fields (`XarrayField`,
 | `RasterField`, `AsyncRasterField` | `RasterDomain` (`georeader.GeoDataBase`) | `RasterioReader`, `AsyncGeoTIFFReader`, `GeoTensor` |
 | `RioXarrayField` | `RasterDomain` | rioxarray `DataArray` |
 | `XarrayField` | `GridDomain` | `xarray.DataArray` (non-raster) |
+| `DaskField` | `GridDomain` | dask-backed `xarray.DataArray` (lazy chunks) |
 | `GeoPandasField` | `VectorDomain` / `PointDomain` | `geopandas.GeoDataFrame` |
 | `XvecField` | `PointDomain` | `xvec.Dataset` |
 
@@ -164,6 +165,7 @@ pip install 'geopatcher[grid]'           # XarrayField
 pip install 'geopatcher[vector]'         # GeoPandasField
 pip install 'geopatcher[point]'          # XvecField
 pip install 'geopatcher[xarray-raster]'  # RioXarrayField
+pip install 'geopatcher[dask]'           # DaskField + Dask helpers
 pip install 'geopatcher[streaming]'      # OverlapAdd(streaming=True)
 pip install 'geopatcher[patch-full]'     # everything above
 ```
