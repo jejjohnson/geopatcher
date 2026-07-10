@@ -8,7 +8,8 @@ Coordinate-aware components (`TemporalStencilGeometry`,
 `TemporalStencilSampler`) opt in via the ``needs_coord = True`` ClassVar.
 When either component sets it, every public method that takes ``series``
 also requires a ``coord=`` 1-D coordinate vector along ``time_axis``. The
-integer path is unchanged when no component is coord-aware. See ADR-00N.
+integer path is unchanged when no component is coord-aware. See ADR-004 in
+``docs/decisions.md``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from geopatcher._src._serialize import axis_envelope
 from geopatcher._src.hooks import (
     PatcherHook,
     _as_hooks,
@@ -300,20 +302,8 @@ class TemporalPatcher:
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "geometry": {
-                "class": type(self.geometry).__name__,
-                "config": self.geometry.get_config(),
-            },
-            "sampler": {
-                "class": type(self.sampler).__name__,
-                "config": self.sampler.get_config(),
-            },
-            "window": {
-                "class": type(self.window).__name__,
-                "config": self.window.get_config(),
-            },
-            "aggregation": {
-                "class": type(self.aggregation).__name__,
-                "config": self.aggregation.get_config(),
-            },
+            "geometry": axis_envelope(self.geometry),
+            "sampler": axis_envelope(self.sampler),
+            "window": axis_envelope(self.window),
+            "aggregation": axis_envelope(self.aggregation),
         }

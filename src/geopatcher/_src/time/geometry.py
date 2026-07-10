@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields, jsonable_scalar
 from geopatcher._src.time.stencils import (
     Stencil,
     build_sampling_slices,
@@ -36,7 +37,7 @@ class TemporalGeometry:
     ``needs_coord = True`` and implement
     ``window_coord(coord, anchor_idx) -> slice``. `TemporalPatcher` dispatches
     on the flag and requires a ``coord=`` argument when it is `True`. See
-    ADR-00N.
+    ADR-004 in ``docs/decisions.md``.
     """
 
     forbid_in_yaml: ClassVar[bool] = False
@@ -65,7 +66,7 @@ class TemporalFixedLookback(TemporalGeometry):
         return slice(start, end)
 
     def get_config(self) -> dict[str, Any]:
-        return {"length": self.length}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -86,7 +87,7 @@ class TemporalLookbackHorizon(TemporalGeometry):
         return slice(start, end)
 
     def get_config(self) -> dict[str, Any]:
-        return {"lookback": self.lookback, "horizon": self.horizon}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -108,7 +109,7 @@ class TemporalMultiScale(TemporalGeometry):
         return out
 
     def get_config(self) -> dict[str, Any]:
-        return {"scales": list(self.scales)}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -125,7 +126,8 @@ class TemporalStencilGeometry(TemporalGeometry):
     `TemporalAggregation.merge` contracts assume contiguous index ranges).
     Pass ``source_step`` at construction to catch stride > 1 up front; the
     constructor also re-checks at `window_coord` time as a belt-and-braces
-    guard for callers that didn't supply it. See ADR-00N.
+    guard for callers that didn't supply it. See ADR-004 in
+    ``docs/decisions.md``.
 
     Args:
         stencil: The `Stencil` (or `TimeStencil`) describing the window shape
@@ -183,14 +185,9 @@ class TemporalStencilGeometry(TemporalGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        source_step = self.source_step
-        if isinstance(source_step, (np.datetime64, np.timedelta64)):
-            source_step = str(source_step)
-        elif isinstance(source_step, np.generic):
-            source_step = source_step.item()
         return {
             "stencil": self.stencil.get_config(),
-            "source_step": source_step,
+            "source_step": jsonable_scalar(self.source_step),
         }
 
 
@@ -215,4 +212,4 @@ class TemporalPhaseWindow(TemporalGeometry):
         return slice(start, end)
 
     def get_config(self) -> dict[str, Any]:
-        return {"period": self.period, "phase_width": self.phase_width}
+        return config_from_fields(self)

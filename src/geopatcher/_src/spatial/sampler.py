@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.domains import GridDomain, PointDomain, VectorDomain
 from geopatcher._src.exceptions import IncompleteScanConfiguration
 from geopatcher._src.spatial.geometry import (
@@ -136,8 +137,7 @@ class SpatialRegularStride(SpatialSampler):
         return tuple(int(s) for s in self.step)
 
     def get_config(self) -> dict[str, Any]:
-        step = list(self.step) if not isinstance(self.step, int) else self.step
-        return {"step": step, "check_full_scan": self.check_full_scan}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -202,8 +202,7 @@ class SpatialJitteredStride(SpatialSampler):
         )
 
     def get_config(self) -> dict[str, Any]:
-        step = list(self.step) if not isinstance(self.step, int) else self.step
-        return {"step": step, "jitter": self.jitter, "seed": self.seed}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -266,7 +265,7 @@ class SpatialRandom(SpatialSampler):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"n_samples": self.n_samples, "seed": self.seed}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -311,11 +310,7 @@ class SpatialPoissonDisk(SpatialSampler):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {
-            "min_dist": self.min_dist,
-            "max_tries": self.max_tries,
-            "seed": self.seed,
-        }
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)

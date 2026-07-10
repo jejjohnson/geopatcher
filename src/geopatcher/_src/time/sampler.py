@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.time.stencils import Stencil, valid_origin_points
 
 
@@ -28,7 +29,8 @@ class TemporalSampler:
     signature is integer-only; coordinate-aware subclasses (e.g.
     `TemporalStencilSampler`) set ``needs_coord = True`` and accept a
     ``coord=`` keyword in `anchors`. `TemporalPatcher` passes the coord
-    vector through when the flag is `True`. See ADR-00N.
+    vector through when the flag is `True`. See ADR-004 in
+    ``docs/decisions.md``.
     """
 
     forbid_in_yaml: ClassVar[bool] = False
@@ -51,7 +53,7 @@ class TemporalRegularStride(TemporalSampler):
         yield from range(0, int(time_len), int(self.step))
 
     def get_config(self) -> dict[str, Any]:
-        return {"step": self.step}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -69,7 +71,7 @@ class TemporalCausalRolling(TemporalSampler):
         yield from range(int(self.start), int(time_len), int(self.step))
 
     def get_config(self) -> dict[str, Any]:
-        return {"step": self.step, "start": self.start}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -122,7 +124,7 @@ class TemporalRandom(TemporalSampler):
             yield int(t)
 
     def get_config(self) -> dict[str, Any]:
-        return {"n": self.n, "seed": self.seed}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -183,9 +185,7 @@ class TemporalStencilSampler(TemporalSampler):
     def get_config(self) -> dict[str, Any]:
         return {
             "stencil": self.stencil.get_config(),
-            "every": self.every,
-            "shuffle": self.shuffle,
-            "seed": self.seed,
+            **config_from_fields(self, exclude=("stencil",)),
         }
 
 

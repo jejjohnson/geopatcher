@@ -18,7 +18,7 @@
 # and the `Closed` re-export.
 """Coordinate-aware stencils for sampling 1-D grids in physical units.
 
-Ported from `neuralgcm/terrax`'s `terrax.xreader.stencils`. See ADR-00N in
+Ported from `neuralgcm/terrax`'s `terrax.xreader.stencils`. See ADR-004 in
 ``docs/decisions.md`` for the design and the v0.1 stride-1 constraint that
 sits *outside* this module (it is enforced by `TemporalStencilGeometry`,
 not by `build_sampling_slices` itself).
@@ -41,6 +41,8 @@ import re
 from typing import Any, Literal
 
 import numpy as np
+
+from geopatcher._src._serialize import config_from_fields
 
 
 Closed = Literal["left", "right", "both", "neither"]
@@ -174,25 +176,7 @@ class Stencil:
 
     def get_config(self) -> dict[str, Any]:
         """YAML-serialisable view of the stencil — geopatcher convention."""
-        return {
-            "start": _scalar(self.start),
-            "stop": _scalar(self.stop),
-            "step": _scalar(self.step),
-            "closed": self.closed,
-        }
-
-
-def _scalar(value: Any) -> Any:
-    """Best-effort scalar coercion for `get_config` round-trip.
-
-    `datetime64`/`timedelta64` are returned as `str(value)` so YAML stays
-    portable; numeric scalars unwrap to Python ints/floats.
-    """
-    if isinstance(value, (np.datetime64, np.timedelta64)):
-        return str(value)
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
+        return config_from_fields(self)
 
 
 _Td64Unit = Literal["D", "h", "m", "s"]

@@ -11,8 +11,7 @@ the disk-backed path (a target zarr / memmap) — `SpatialOverlapAdd` is the
 canonical streaming-safe member; `SpatialMedian` triggers a warning if the
 caller asks for streaming.
 
-See ``scaling.md`` §"Streaming-Compatible Aggregations" for the
-mathematical framing.
+See ``docs/patching.md`` §"Streaming aggregations" for the framing.
 """
 
 from __future__ import annotations
@@ -25,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import numpy as np
+
+from geopatcher._src._serialize import config_from_fields
 
 
 COG_WRITER = "cog"
@@ -592,7 +593,7 @@ class SpatialHardVote(SpatialAggregation):
         return np.argmax(votes, axis=0)
 
     def get_config(self) -> dict[str, Any]:
-        return {"n_classes": self.n_classes}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -621,7 +622,7 @@ class SpatialSoftVote(SpatialAggregation):
         return np.argmax(acc, axis=0)
 
     def get_config(self) -> dict[str, Any]:
-        return {"n_classes": self.n_classes}
+        return config_from_fields(self)
 
 
 # ---------------------------------------------------------------------------
@@ -748,9 +749,20 @@ class _SketchAggregation(SpatialAggregation):
         if isinstance(patches, self.__class__):
             self.merge_state(patches)
             return self
+        self._reset()
         for patch in patches:
             self.update(patch)
         return self.finalize()
+
+    def _reset(self) -> None:
+        """Hook run at each ``merge(patches)`` entry (not `merge_state`).
+
+        Default no-op. Stochastic sketches override it to rebuild their
+        accumulator state and RNG from ``seed`` so repeated ``merge()``
+        calls on one instance are reproducible — the same convention as
+        the samplers, which rebuild ``default_rng(seed)`` per call.
+        """
+        return None
 
     def update(self, patch: Any) -> None:
         self.update_many(_patch_values(patch))
@@ -778,7 +790,15 @@ def _patch_values(patch: Any) -> np.ndarray:
 
 @dataclass(eq=False)
 class SpatialApproxQuantile(_SketchAggregation):
-    """Global approximate quantile via bounded reservoir sampling."""
+    """Global approximate quantile via bounded reservoir sampling.
+
+    Each ``merge(patches)`` call rebuilds the reservoir and its RNG from
+    ``seed`` before consuming the patches, so reusing one instance across
+    multiple ``merge()`` / ``reduce()`` calls is reproducible — the same
+    contract as the samplers, which rebuild ``default_rng(seed)`` per
+    call. Incremental accumulation goes through ``update`` /
+    ``update_many`` / ``merge_state`` instead.
+    """
 
     q: float | list[float] = 0.5
     compression: int = 200
@@ -790,6 +810,12 @@ class SpatialApproxQuantile(_SketchAggregation):
     def __post_init__(self) -> None:
         if self.compression < 1:
             raise ValueError("compression must be >= 1")
+        self._rng = np.random.default_rng(self.seed)
+
+    def _reset(self) -> None:
+        """Rebuild reservoir state + RNG from ``seed`` (per-merge determinism)."""
+        self._sample = []
+        self._seen = 0
         self._rng = np.random.default_rng(self.seed)
 
     def update_many(self, values: Iterable[Any]) -> None:
@@ -814,7 +840,7 @@ class SpatialApproxQuantile(_SketchAggregation):
         return self._sample
 
     def get_config(self) -> dict[str, Any]:
-        return {"q": self.q, "compression": self.compression, "seed": self.seed}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -858,7 +884,7 @@ class SpatialApproxCardinality(_SketchAggregation):
         self._registers = np.maximum(self._registers, other._registers)
 
     def get_config(self) -> dict[str, Any]:
-        return {"p": self.p}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -897,7 +923,7 @@ class SpatialApproxMode(_SketchAggregation):
         return self._counts.keys()
 
     def get_config(self) -> dict[str, Any]:
-        return {"k": self.k}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -948,12 +974,20 @@ class SpatialStreamingHistogram(_SketchAggregation):
         self._counts = counts
 
     def get_config(self) -> dict[str, Any]:
-        return {"bins": self.bins}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
 class SpatialReservoir(_SketchAggregation):
-    """Uniform global reservoir sample using Vitter's Algorithm R."""
+    """Uniform global reservoir sample using Vitter's Algorithm R.
+
+    Each ``merge(patches)`` call rebuilds the reservoir and its RNG from
+    ``seed`` before consuming the patches, so reusing one instance across
+    multiple ``merge()`` / ``reduce()`` calls is reproducible — the same
+    contract as the samplers, which rebuild ``default_rng(seed)`` per
+    call. Incremental accumulation goes through ``update`` /
+    ``update_many`` / ``merge_state`` instead.
+    """
 
     k: int = 100
     seed: int | None = 0
@@ -964,6 +998,12 @@ class SpatialReservoir(_SketchAggregation):
     def __post_init__(self) -> None:
         if self.k < 1:
             raise ValueError("k must be >= 1")
+        self._rng = np.random.default_rng(self.seed)
+
+    def _reset(self) -> None:
+        """Rebuild reservoir state + RNG from ``seed`` (per-merge determinism)."""
+        self._sample = []
+        self._seen = 0
         self._rng = np.random.default_rng(self.seed)
 
     def update_many(self, values: Iterable[Any]) -> None:
@@ -984,7 +1024,7 @@ class SpatialReservoir(_SketchAggregation):
         return self._sample
 
     def get_config(self) -> dict[str, Any]:
-        return {"k": self.k, "seed": self.seed}
+        return config_from_fields(self)
 
 
 def _hash64(value: Any) -> int:
@@ -1010,7 +1050,8 @@ def _warn_if_unsafe_streaming(aggregation: SpatialAggregation) -> None:
     msg = (
         f"{type(aggregation).__name__} has streaming_safe = False — "
         "the merge is happening in-RAM. For streaming alternatives see "
-        "scaling.md (Median->ApproxQuantile, Mode->HardVote or "
+        "docs/patching.md §'Streaming aggregations' "
+        "(Median->ApproxQuantile, Mode->HardVote or "
         "ApproxMode, Learned->two-pass)."
     )
     if get_strict():

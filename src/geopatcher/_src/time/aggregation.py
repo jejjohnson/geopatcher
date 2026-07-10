@@ -19,6 +19,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from geopatcher._src._serialize import config_from_fields
+
 
 class TemporalAggregation:
     """Base for time-axis merge strategies."""
@@ -114,7 +116,7 @@ class TemporalHierarchicalCombine(TemporalAggregation):
         return out
 
     def get_config(self) -> dict[str, Any]:
-        return {"scales": list(self.scales)}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -151,4 +153,4 @@ class TemporalForecast(TemporalAggregation):
         return out
 
     def get_config(self) -> dict[str, Any]:
-        return {"horizon": self.horizon, "time_axis": self.time_axis}
+        return config_from_fields(self)

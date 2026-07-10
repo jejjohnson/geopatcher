@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.spatial.geometry import SpatialGeometry, SpatialRectangular
 
 
@@ -73,7 +74,7 @@ class SpatialTukey(SpatialWindow):
         return _separable(shape, lambda n: tukey(n, alpha=self.alpha, sym=False))
 
     def get_config(self) -> dict[str, Any]:
-        return {"alpha": self.alpha}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -92,7 +93,7 @@ class SpatialGaussian(SpatialWindow):
         return _separable(shape, lambda n: _gaussian_1d(n, self.sigma))
 
     def get_config(self) -> dict[str, Any]:
-        return {"sigma": self.sigma}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
