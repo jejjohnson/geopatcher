@@ -136,3 +136,126 @@ def test_hyperloglog_sketches_merge_disjoint_sets() -> None:
     left.merge(right)
 
     assert left.finalize() == pytest.approx(100, rel=0.2)
+
+
+@pytest.fixture
+def stitch_field() -> RasterField:
+    gt = GeoTensor(
+        values=np.arange(16 * 16, dtype=np.float32).reshape(16, 16),
+        transform=rasterio.Affine.identity(),
+        crs="EPSG:32630",
+    )
+    return RasterField(gt)
+
+
+def _stitch_patcher(aggregation: SpatialOverlapAdd) -> SpatialPatcher:
+    return SpatialPatcher(
+        geometry=SpatialRectangular(size=(8, 8)),
+        sampler=SpatialRegularStride(step=8),
+        window=SpatialBoxcar(),
+        aggregation=aggregation,
+    )
+
+
+class TestCogWriter:
+    """`SpatialOverlapAdd(writer="cog")` — the COG aggregation target (gh #15)."""
+
+    def test_roundtrip_matches_in_memory_merge(
+        self, stitch_field: RasterField, tmp_path: Path
+    ) -> None:
+        target = str(tmp_path / "out.tif")
+        agg = SpatialOverlapAdd(streaming=True, target_path=target, writer="cog")
+        patcher = _stitch_patcher(agg)
+        patches = list(patcher.split(stitch_field))
+        out_path = patcher.merge(patches, stitch_field.domain)
+        assert out_path == target
+
+        reference = SpatialOverlapAdd().merge(patches, stitch_field.domain)
+        with rasterio.open(target) as src:
+            assert src.count == 1
+            assert src.profile["tiled"]
+            assert src.crs is not None
+            written = src.read(1)
+        np.testing.assert_allclose(written, np.asarray(reference), rtol=1e-6)
+
+    def test_cog_options_forwarded(
+        self, stitch_field: RasterField, tmp_path: Path
+    ) -> None:
+        target = str(tmp_path / "out.tif")
+        agg = SpatialOverlapAdd(
+            streaming=True,
+            target_path=target,
+            writer="cog",
+            cog={"compress": "LZW", "blocksize": 256},
+        )
+        patcher = _stitch_patcher(agg)
+        patcher.merge(patcher.split(stitch_field), stitch_field.domain)
+        with rasterio.open(target) as src:
+            assert str(src.profile["compress"]).lower() == "lzw"
+            assert src.profile["blockxsize"] == 256
+
+    def test_multiband_write(self, tmp_path: Path) -> None:
+        from geopatcher._src.spatial.aggregation import _write_cog
+
+        target = str(tmp_path / "rgb.tif")
+
+        class _Domain:
+            crs = "EPSG:32630"
+            transform = rasterio.Affine.identity()
+
+        data = np.random.default_rng(0).random((3, 8, 8)).astype(np.float32)
+        _write_cog(data, _Domain(), target, None)
+        with rasterio.open(target) as src:
+            assert src.count == 3
+            np.testing.assert_allclose(src.read(), data, rtol=1e-6)
+
+    def test_rejects_bad_rank(self, tmp_path: Path) -> None:
+        from geopatcher._src.spatial.aggregation import _write_cog
+
+        with pytest.raises(ValueError, match="2-D array or a 3-D"):
+            _write_cog(np.zeros((2, 2, 2, 2)), object(), str(tmp_path / "x.tif"), None)
+
+
+class TestZarrSharding:
+    """`SpatialOverlapAdd(shard_shape=...)` — zarr v3 sharding (gh #14)."""
+
+    def test_sharded_output_matches_in_memory_merge(
+        self, stitch_field: RasterField, tmp_path: Path
+    ) -> None:
+        zarr = pytest.importorskip("zarr")
+        agg = SpatialOverlapAdd(
+            streaming=True,
+            target_path=str(tmp_path),
+            chunks=(8, 8),
+            shard_shape=(16, 16),
+        )
+        patcher = _stitch_patcher(agg)
+        patches = list(patcher.split(stitch_field))
+        result = patcher.merge(patches, stitch_field.domain)
+
+        reference = SpatialOverlapAdd().merge(patches, stitch_field.domain)
+        np.testing.assert_allclose(np.asarray(result[:]), reference, rtol=1e-6)
+
+        # Fresh-process read: the store on disk is valid sharded zarr.
+        reread = zarr.open(str(tmp_path / "rec.zarr"), mode="r")
+        np.testing.assert_allclose(np.asarray(reread[:]), reference, rtol=1e-6)
+        assert reread.shards == (16, 16)
+        assert reread.chunks == (8, 8)
+
+    def test_unsharded_and_sharded_agree(
+        self, stitch_field: RasterField, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("zarr")
+        patches = list(_stitch_patcher(SpatialOverlapAdd()).split(stitch_field))
+        sharded = SpatialOverlapAdd(
+            streaming=True,
+            target_path=str(tmp_path / "sharded"),
+            chunks=(8, 8),
+            shard_shape=(16, 16),
+        ).merge(patches, stitch_field.domain)
+        plain = SpatialOverlapAdd(
+            streaming=True,
+            target_path=str(tmp_path / "plain"),
+            chunks=(8, 8),
+        ).merge(patches, stitch_field.domain)
+        np.testing.assert_allclose(np.asarray(sharded[:]), np.asarray(plain[:]))

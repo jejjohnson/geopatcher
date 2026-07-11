@@ -234,7 +234,9 @@ Zarrs, multi-resolution archives) you also want **coordinate space** —
 "9 hours of context, regardless of whether that's 9 array steps or 3 or
 something else." `TimeStencil` plus `TemporalStencilGeometry` /
 `TemporalStencilSampler` express the window in physical units against a
-1-D coordinate vector you pass via `TemporalPatcher.split(..., coord=)`.
+1-D coordinate vector you pass via `TemporalPatcher.split(..., coord=)`
+(or `SpatioTemporalPatcher.split(..., coord=)`, which threads it into
+the temporal half of both couplings).
 The patcher requires `coord=` when either component opts in via
 `needs_coord = True`; the integer path is unchanged when it doesn't.
 The recipe in [`recipes/temporal-stencils.md`](recipes/temporal-stencils.md)
