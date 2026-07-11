@@ -8,6 +8,8 @@ into backend-specific indices. Five samplers cover the common cases:
 - `SpatialRandom` — N uniformly-random anchors (training-time augmentation).
 - `SpatialPoissonDisk` — well-spaced random anchors via Bridson's algorithm.
 - `SpatialExplicit` — caller-supplied anchors (event-triggered, station list, …).
+- `SpatialAlongTrack` — anchors along an ordered track, optionally resampled
+  to a fixed along-track spacing (altimetry ground tracks, flight lines, …).
 """
 
 from __future__ import annotations
@@ -338,6 +340,119 @@ class SpatialExplicit(SpatialSampler):
 
     def get_config(self) -> dict[str, Any]:
         return {"n_anchors": len(self.anchors_)}
+
+
+@dataclass(eq=False)
+class SpatialAlongTrack(SpatialSampler):
+    """Anchors along an ordered track, optionally resampled to fixed spacing.
+
+    The track is an ordered polyline of ``(x, y)`` coordinates in the
+    domain's CRS (an altimetry ground track, a flight line, a ship
+    transect, …). With ``spacing`` set, the track is resampled to points
+    at a fixed along-track distance (linear interpolation along the
+    cumulative Euclidean arc length, in coordinate units); with
+    ``spacing=None`` the original vertices are used as-is.
+
+    On a raster domain, each track point maps through the inverse affine
+    to a pixel and the yielded anchor is the upper-left corner that
+    **centres** the geometry's patch on that pixel; track points falling
+    outside the raster are skipped, and (under the default ``"drop"``
+    boundary) anchors are clamped so the patch stays in-domain. On a
+    `PointDomain`, the ``(x, y)`` coordinates themselves are yielded —
+    ready for `SpatialKNNGraph` / `SpatialRadiusGraph` neighborhoods.
+
+    Args:
+        track: Ordered ``(N, 2)`` array of ``(x, y)`` coordinates. Also
+            accepts a `geopandas.GeoDataFrame` / `GeoSeries` of points
+            or a `shapely.LineString` — anything exposing ``.geometry``,
+            ``.x`` / ``.y``, or ``.coords``.
+        spacing: Along-track resampling distance in coordinate units, or
+            ``None`` to anchor at the original vertices. Requires at
+            least two distinct vertices when set.
+    """
+
+    track: Any
+    spacing: float | None = None
+
+    def __post_init__(self) -> None:
+        self.track = _track_coords(self.track)
+        if self.spacing is not None and self.spacing <= 0:
+            raise ValueError(f"spacing must be positive, got {self.spacing}")
+
+    def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
+        points = self._resampled()
+        if _is_raster_domain(domain):
+            h, w = int(domain.shape[-2]), int(domain.shape[-1])
+            size = getattr(geometry, "size", (1, 1))
+            ph, pw = int(size[-2]), int(size[-1])
+            boundary = getattr(geometry, "boundary", "drop")
+            if boundary == "drop":
+                rmax, cmax = max(h - ph, 0), max(w - pw, 0)
+            else:
+                rmax, cmax = h - 1, w - 1
+            inv = ~domain.transform
+            for x, y in points:
+                col_f, row_f = inv * (float(x), float(y))
+                r, c = int(np.floor(row_f)), int(np.floor(col_f))
+                if not (0 <= r < h and 0 <= c < w):
+                    continue
+                # Upper-left corner that centres the patch on the pixel.
+                yield (
+                    min(rmax, max(0, r - ph // 2)),
+                    min(cmax, max(0, c - pw // 2)),
+                )
+            return
+        if isinstance(domain, PointDomain):
+            for x, y in points:
+                yield (float(x), float(y))
+            return
+        raise NotImplementedError(
+            f"SpatialAlongTrack doesn't support {type(domain).__name__} domains."
+        )
+
+    def _resampled(self) -> np.ndarray:
+        """Return track vertices, resampled to `spacing` when it is set."""
+        pts = np.asarray(self.track, dtype=float)
+        if self.spacing is None:
+            return pts
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        keep = seg > 0
+        # Collapse zero-length segments so the arc-length axis is
+        # strictly increasing for np.interp.
+        pts = np.concatenate([pts[:1], pts[1:][keep]])
+        if len(pts) < 2:
+            raise ValueError(
+                "SpatialAlongTrack with spacing needs at least two distinct "
+                "track vertices."
+            )
+        dist = np.concatenate([[0.0], np.cumsum(seg[keep])])
+        total = float(dist[-1])
+        n_steps = int(np.floor(total / self.spacing + 1e-9))
+        s = np.arange(n_steps + 1, dtype=float) * self.spacing
+        return np.column_stack(
+            [np.interp(s, dist, pts[:, 0]), np.interp(s, dist, pts[:, 1])]
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        return {"n_points": len(self.track), "spacing": self.spacing}
+
+
+def _track_coords(track: Any) -> np.ndarray:
+    """Coerce a track-like object into an ``(N, 2)`` float coordinate array."""
+    if hasattr(track, "geometry"):  # GeoDataFrame
+        track = track.geometry
+    if hasattr(track, "x") and hasattr(track, "y"):  # GeoSeries of points
+        coords = np.column_stack([np.asarray(track.x), np.asarray(track.y)])
+    elif hasattr(track, "coords"):  # shapely LineString
+        coords = np.asarray(track.coords, dtype=float)[:, :2]
+    else:
+        coords = np.asarray(track, dtype=float)
+    if coords.ndim != 2 or coords.shape[1] != 2 or len(coords) == 0:
+        raise ValueError(
+            f"track must be an ordered (N, 2) coordinate array, "
+            f"got shape {coords.shape}."
+        )
+    return coords
 
 
 def _ndrange(ranges: list[range]) -> Iterator[tuple[int, ...]]:

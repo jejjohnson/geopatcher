@@ -90,6 +90,7 @@ from geopatcher.fields import RioXarrayField, DaskField, ObstoreCogField
 ::: geopatcher._src.spatial.sampler.SpatialRandom
 ::: geopatcher._src.spatial.sampler.SpatialPoissonDisk
 ::: geopatcher._src.spatial.sampler.SpatialExplicit
+::: geopatcher._src.spatial.sampler.SpatialAlongTrack
 
 ### Window
 

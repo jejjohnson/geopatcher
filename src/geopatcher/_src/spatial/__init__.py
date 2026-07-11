@@ -44,6 +44,7 @@ from geopatcher._src.spatial.patcher import (
     SpatialPatcher,
 )
 from geopatcher._src.spatial.sampler import (
+    SpatialAlongTrack,
     SpatialExplicit,
     SpatialJitteredStride,
     SpatialPoissonDisk,
@@ -65,6 +66,7 @@ __all__ = [
     "AsyncSpatialPatcher",
     "PatchErrorRecord",
     "SpatialAggregation",
+    "SpatialAlongTrack",
     "SpatialApproxCardinality",
     "SpatialApproxMode",
     "SpatialApproxQuantile",
