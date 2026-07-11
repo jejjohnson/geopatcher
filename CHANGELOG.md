@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.6](https://github.com/jejjohnson/geopatcher/compare/v0.0.5...v0.0.6) (2026-07-11)
+
+
+### Features
+
+* **spatial_time:** thread coord= through SpatioTemporalPatcher; fix zarr sharding ([#68](https://github.com/jejjohnson/geopatcher/issues/68)) ([dcf18ea](https://github.com/jejjohnson/geopatcher/commit/dcf18ea060c6d36d42ba66636fc700fa0ce10d45))
+* **spatial:** SpatialAlongTrack sampler + PointDomain nearest/bilinear sampling ([#67](https://github.com/jejjohnson/geopatcher/issues/67)) ([4ae0054](https://github.com/jejjohnson/geopatcher/commit/4ae00546b98d74e6bdc1338becf7b46d7ae080db))
+
+
+### Bug Fixes
+
+* **tests:** add missing rasterio and GeoTensor imports in test_operational_scale ([#70](https://github.com/jejjohnson/geopatcher/issues/70)) ([aabc10b](https://github.com/jejjohnson/geopatcher/commit/aabc10bd83292e4fa67decbd25b25471f9320bcd))
+
 ## [0.0.5](https://github.com/jejjohnson/geopatcher/compare/v0.0.4...v0.0.5) (2026-06-03)
 
 
