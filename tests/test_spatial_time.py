@@ -128,23 +128,130 @@ class TestUnknownCoupling:
             list(stp.split(time_field))
 
 
-class TestCoordAwareTemporalRejected:
-    """coord= plumbing isn't done in SpatioTemporalPatcher yet (gh #58).
+class TestCoordAwareTemporal:
+    """coord= threading through SpatioTemporalPatcher (gh #58)."""
 
-    Fail fast with a clear pointer rather than surface as a TypeError mid-
-    iteration from the temporal sampler / geometry signature mismatch.
-    """
+    @pytest.fixture
+    def coord(self) -> np.ndarray:
+        # 8 three-hourly steps, matching time_field's time axis.
+        return np.arange(
+            "2020-01-01T00", "2020-01-02T00", 3, dtype="datetime64[h]"
+        ).astype("datetime64[ns]")
 
-    def test_stencil_temporal_raises_with_pointer(
-        self, time_field: RasterField, sp: SpatialPatcher
-    ) -> None:
-        stencil = TimeStencil("-1h", "1h", "1h", closed="both")
-        tp_coord = TemporalPatcher(
-            geometry=TemporalStencilGeometry(stencil=stencil),
+    @pytest.fixture
+    def tp_coord(self) -> TemporalPatcher:
+        # -3h..+3h at 3-hourly cadence: 3-point windows, origins 1..6.
+        stencil = TimeStencil("-3h", "3h", "3h", closed="both")
+        return TemporalPatcher(
+            geometry=TemporalStencilGeometry(
+                stencil=stencil, source_step=np.timedelta64(3, "h")
+            ),
             sampler=TemporalStencilSampler(stencil=stencil),
             window=TemporalCausalBoxcar(),
             aggregation=TemporalForecast(horizon=1),
         )
+
+    def test_missing_coord_raises(
+        self, time_field: RasterField, sp: SpatialPatcher, tp_coord: TemporalPatcher
+    ) -> None:
         stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="product")
-        with pytest.raises(TypeError, match="coordinate-aware temporal"):
+        with pytest.raises(ValueError, match="requires coord="):
             list(stp.split(time_field))
+
+    def test_wrong_length_coord_raises(
+        self,
+        time_field: RasterField,
+        sp: SpatialPatcher,
+        tp_coord: TemporalPatcher,
+        coord: np.ndarray,
+    ) -> None:
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="product")
+        with pytest.raises(ValueError, match="coord length"):
+            list(stp.split(time_field, coord=coord[:-1]))
+
+    def test_product_end_to_end(
+        self,
+        time_field: RasterField,
+        sp: SpatialPatcher,
+        tp_coord: TemporalPatcher,
+        coord: np.ndarray,
+    ) -> None:
+        from geopatcher._src.time.stencils import valid_origin_points
+
+        stencil = TimeStencil("-3h", "3h", "3h", closed="both")
+        origins = valid_origin_points(coord, stencil)
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="product")
+        patches = list(stp.split(time_field, coord=coord))
+        # 4 spatial anchors x one 3-point window per valid origin.
+        assert len(patches) == 4 * len(origins)
+        for p in patches:
+            assert p.data.shape == (3, 8, 8)
+            s = p.temporal_indices
+            assert s.stop - s.start == 3
+            # Window is centred on the anchor (lookback 1, horizon 1).
+            assert s.start == p.time - 1
+
+    def test_coupled_with_stencil_geometry(
+        self, time_field: RasterField, tp_coord: TemporalPatcher, coord: np.ndarray
+    ) -> None:
+        sp = SpatialPatcher(
+            geometry=SpatialRectangular(size=(8, 8)),
+            sampler=SpatialExplicit(anchors_=[((0, 0), 3), ((8, 8), 5)]),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+        )
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="coupled")
+        patches = list(stp.split(time_field, coord=coord))
+        assert len(patches) == 2
+        assert [p.time for p in patches] == [3, 5]
+        for p in patches:
+            assert p.data.shape == (3, 8, 8)
+            assert p.temporal_indices == slice(p.time - 1, p.time + 2)
+
+    def test_asplit_matches_split(
+        self,
+        time_field: RasterField,
+        sp: SpatialPatcher,
+        tp_coord: TemporalPatcher,
+        coord: np.ndarray,
+    ) -> None:
+        import asyncio
+
+        class _AsyncField:
+            def __init__(self, inner: RasterField) -> None:
+                self.inner = inner
+
+            @property
+            def domain(self):
+                return self.inner.domain
+
+            async def aselect(self, window):
+                await asyncio.sleep(0)
+                return self.inner.select(window)
+
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="product")
+        sync_patches = list(stp.split(time_field, coord=coord))
+
+        async def collect() -> list[SpatioTemporalPatch]:
+            return [p async for p in stp.asplit(_AsyncField(time_field), coord=coord)]
+
+        async_patches = asyncio.run(collect())
+        assert len(async_patches) == len(sync_patches)
+        for a, b in zip(async_patches, sync_patches, strict=True):
+            assert a.space == b.space
+            assert a.time == b.time
+            np.testing.assert_array_equal(a.data, b.data)
+
+    def test_integer_pipeline_ignores_coord(
+        self,
+        time_field: RasterField,
+        sp: SpatialPatcher,
+        tp: TemporalPatcher,
+        coord: np.ndarray,
+    ) -> None:
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp, coupling="product")
+        with_coord = list(stp.split(time_field, coord=coord))
+        without = list(stp.split(time_field))
+        assert len(with_coord) == len(without)
+        for a, b in zip(with_coord, without, strict=True):
+            np.testing.assert_array_equal(a.data, b.data)

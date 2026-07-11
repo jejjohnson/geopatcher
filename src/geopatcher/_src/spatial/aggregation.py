@@ -454,27 +454,35 @@ def _open_zarr_array(
 ) -> Any:
     import zarr
 
-    kwargs: dict[str, Any] = {
-        "mode": "w",
-        "shape": shape,
-        "chunks": chunks,
-        "dtype": dtype,
-        "fill_value": fill_value,
-    }
     if shard_shape is not None:
-        kwargs["shards"] = shard_shape
-    try:
-        return zarr.open(path, **kwargs)
-    except TypeError:
-        if shard_shape is None:
-            raise
+        # Sharded creation goes through the zarr v3 `create_array` API —
+        # `zarr.open` has no `shards` parameter on any zarr release, so
+        # routing shards through it silently produced unsharded stores.
+        create_array = getattr(zarr, "create_array", None)
+        if create_array is not None:
+            return create_array(
+                path,
+                shape=shape,
+                chunks=chunks,
+                shards=shard_shape,
+                dtype=dtype,
+                fill_value=fill_value,
+                overwrite=True,
+            )
         warnings.warn(
-            "installed zarr does not accept `shards`; writing unsharded output",
+            "installed zarr does not support sharding (requires zarr >= 3); "
+            "writing unsharded output",
             RuntimeWarning,
             stacklevel=2,
         )
-        kwargs.pop("shards")
-        return zarr.open(path, **kwargs)
+    return zarr.open(
+        path,
+        mode="w",
+        shape=shape,
+        chunks=chunks,
+        dtype=dtype,
+        fill_value=fill_value,
+    )
 
 
 def _write_cog(
