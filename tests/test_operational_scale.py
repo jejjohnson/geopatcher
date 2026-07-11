@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import rasterio
+from georeader.geotensor import GeoTensor
 from rasterio.windows import Window
 
 from geopatcher import (
