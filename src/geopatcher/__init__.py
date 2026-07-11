@@ -11,7 +11,7 @@ Public surface re-exports:
   `geopatcher.fields`, importing their extras on first access.
 - Top-level patchers: `SpatialPatcher`, `AsyncSpatialPatcher`,
   `TemporalPatcher`, `SpatioTemporalPatcher`.
-- ML / random access: `IndexedPatchView`, `stack_patches`.
+- ML / random access: `IndexedPatchView`, `PatchCache`, `stack_patches`.
 - Observability: `PatcherHook` callback protocol, `PatchJournal`,
   `PatchErrorRecord`, `get_strict` / `set_strict`,
   `IncompleteScanConfiguration`.
@@ -32,6 +32,7 @@ The patcher core itself remains framework-free.
 from __future__ import annotations
 
 from geopatcher import fields, spatial, time
+from geopatcher._src.cache import PatchCache
 from geopatcher._src.config import (
     get_strict,
     set_strict,
@@ -46,6 +47,7 @@ from geopatcher._src.exceptions import IncompleteScanConfiguration
 from geopatcher._src.fields import (
     AsyncRasterField,
     RasterField,
+    ReprojectingRasterField,
 )
 from geopatcher._src.hooks import PatcherHook
 from geopatcher._src.indexed import IndexedPatchView
@@ -72,6 +74,7 @@ from geopatcher._src.spatial import (  # re-export of all spatial concretes + ba
     SpatialByIndex,
     SpatialCustom,
     SpatialExplicit,
+    SpatialExplicitCoords,
     SpatialGaussian,
     SpatialGeometry,
     SpatialHann,
@@ -156,12 +159,14 @@ __all__ = [
     "IndexedPatchView",
     "ObstoreCogField",
     "Patch",
+    "PatchCache",
     "PatchErrorRecord",
     "PatchJournal",
     "PatcherHook",
     "PointDomain",
     "RasterDomain",
     "RasterField",
+    "ReprojectingRasterField",
     "SpatialAggregation",
     "SpatialAlongTrack",
     "SpatialApproxCardinality",
@@ -171,6 +176,7 @@ __all__ = [
     "SpatialByIndex",
     "SpatialCustom",
     "SpatialExplicit",
+    "SpatialExplicitCoords",
     "SpatialGaussian",
     "SpatialGeometry",
     "SpatialHann",

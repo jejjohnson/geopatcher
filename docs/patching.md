@@ -63,18 +63,92 @@ geom = SpatialRectangular(size=(256, 256), boundary="pad")
 | Mode | Behavior |
 |------|----------|
 | `"drop"` (default) | Sampler clips so overflowing anchors are never emitted. Edge residual is silently dropped — exactly the pre-issue-19 behavior. |
-| `"pad"` | Edge anchors are emitted; the raster `Field` reads with `boundless=True` so the patch is the full geometry size, padded in the overflow region with the reader's nodata. **Only `RasterField` / `AsyncRasterField` honor this contract today** — `RioXarrayField.select` clips via `isel` instead, so `"pad"` against a rioxarray field silently behaves like `"shrink"`. Wrap your data in `RasterField` if you need true padding, or use `"shrink"` explicitly. |
+| `"pad"` | Edge anchors are emitted; the patch is the full geometry size, padded in the overflow region with the reader's nodata (or `pad_value` when set). |
+| `"reflect"` | Edge anchors are emitted; the overflow region is mirror-padded from the in-domain interior — the spectrally correct choice for overlap-add stitching with tapered windows (no DC dip at the scene boundary). Requires the overflow on each side to be smaller than the in-domain extent, else a clear `ValueError` is raised. |
 | `"shrink"` | Edge anchors are emitted; the geometry clips the returned Window so the patch is *smaller* at the edge. Weights crop to match. |
 | `"raise"` | Edge anchors are emitted; `SpatialPatcher.split` raises a `ValueError` on the first overflow. Useful with `SpatialExplicit` when the caller wants strict edge handling. |
 
-`"reflect"` and a fully aggregation-aware `"pad"` (zero-weight mask in
-the overflow region for COLA-correct stitching) are planned follow-ups —
-see issue #19.
+`"pad"` and `"reflect"` are guaranteed by the patcher itself — the
+overflowing window is clipped to the domain, read once, then padded up
+to the full geometry size, with a `GeoTensor` chip's transform shifted so
+its georeferencing stays exact. This is **field-independent**: it works
+identically for `RasterField`, `RioXarrayField`, and any other `Field`.
+Set a specific constant fill with `pad_value`:
+
+```python
+geom = SpatialRectangular(size=(256, 256), boundary="pad", pad_value=0.0)
+```
 
 Only `SpatialRectangular` on raster domains honors the parameter in v0.x;
 graph and polygon geometries always behave as if `"drop"` (their natural
 clipping is already correct), and `GridDomain` support is pending an
 xarray-pad story.
+
+## Mixed-CRS patching
+
+Anchors and fields don't have to share a CRS (issue #20). Two
+independent levels:
+
+**Level 1 — anchor reprojection (cheap, metadata-only).** The
+coordinate-consuming samplers take a `crs=` for coordinates expressed in
+a CRS other than the domain's; they are reprojected to the domain CRS
+before the pixel mapping. `SpatialAlongTrack` resamples by `spacing` in
+*domain* units after the transform, and the new `SpatialExplicitCoords`
+centres a chip on each world coordinate:
+
+```python
+# Event catalogue in lon/lat, imagery in UTM.
+sampler = gp.SpatialExplicitCoords(
+    coords=list(zip(catalog.lon, catalog.lat)),
+    crs="EPSG:4326",            # None ⇒ coords already in the domain CRS
+)
+# Ground track in lon/lat over a UTM field.
+sampler = gp.SpatialAlongTrack(track_lonlat, spacing=5_000.0, crs="EPSG:4326")
+```
+
+A `polar_guard` (`"warn"` / `"raise"` / `"ignore"`) flags unreliable
+reprojection near the poles (`|lat| > 80°`) or across the ±180°
+antimeridian when the source CRS is geographic.
+
+**Level 2 — pixel reprojection (heavy, opt-in).** `ReprojectingRasterField`
+presents the *destination* grid as its domain, so every sampler /
+geometry / aggregation works on the target grid unchanged and each chip
+is warped from the source:
+
+```python
+field = gp.ReprojectingRasterField(reader, dst_crs="EPSG:3857", resolution=30.0)
+field.domain.crs                       # EPSG:3857 — samplers see the dst grid
+patches = list(patcher.split(field))   # chips are (H, W) in dst_crs
+```
+
+Use Level 1 when the field is already on the grid you want and only the
+anchor coordinates are foreign; reach for Level 2 when you need the whole
+pipeline to run on a different grid than the source raster's.
+
+## Caching reads across runs
+
+Iterating on an operator means reading the same patches many times.
+`PatchCache` (issue #24) is a cross-run, content-addressed on-disk cache
+keyed by `sha256(field_id ‖ geometry+window config ‖ anchor)`: the second
+*process* skips the source read entirely and only consults the field for
+its `domain` metadata.
+
+```python
+cache = gp.PatchCache("./.geopatcher_cache", max_bytes=20 * 2**30)
+
+for patch in patcher.split(field, cache=cache):   # run 1: reads + cache fill
+    out = my_op_v1(patch.data)
+for patch in patcher.split(field, cache=cache):   # run 2: zero source reads
+    out = my_op_v2(patch.data)
+
+cache.stats()   # {"hits": ..., "misses": ..., "bytes": ..., "entries": ...}
+```
+
+It composes with `journal=` (completion tracking) and `prefetch=`, and
+plugs into random access via `IndexedPatchView(patcher, field, cache=cache)`.
+Path- and URL-backed fields derive their identity automatically; pass
+`PatchCache(..., field_id="scene")` for in-memory (`GeoTensor`-backed)
+fields, which have no stable identity of their own.
 
 ## Protocols: `Field` and `Domain`
 

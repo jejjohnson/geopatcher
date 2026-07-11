@@ -50,7 +50,10 @@ class IndexedPatchView(Sequence[Patch]):
             same two methods.
         field: The `Field` to read from.
         cache: If ``True``, cache patches in memory by integer index after
-            the first access. Mirrors xrpatcher's ``cache=True``.
+            the first access (mirrors xrpatcher's ``cache=True``). A
+            `PatchCache` instead routes reads through the cross-run,
+            content-addressed on-disk cache (gh #24); ``preload`` and
+            ``cache_size`` do not apply in that mode.
         preload: If ``True`` and ``cache=True``, eagerly materialise each
             patch's data (via `xarray.DataArray.load` / `dask.compute` /
             numpy passthrough) before caching, so cached entries are
@@ -63,22 +66,28 @@ class IndexedPatchView(Sequence[Patch]):
 
     patcher: Any
     field: Any
-    cache: bool = False
+    cache: bool | Any = False
     preload: bool = False
     cache_size: int | None = None
     _anchors: list[Any] = field(default_factory=list, init=False, repr=False)
     _cache: OrderedDict[int, Patch] = field(
         default_factory=OrderedDict, init=False, repr=False
     )
+    _disk_cache: Any = field(default=None, init=False, repr=False, compare=False)
     _cache_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        if self.preload and not self.cache:
+        # A non-bool `cache` is a `PatchCache` (content-addressed, on-disk);
+        # `cache=True` is the in-memory index cache. `preload` / `cache_size`
+        # only apply to the latter.
+        self._disk_cache = None if isinstance(self.cache, bool) else self.cache
+        mem_cache = self.cache is True
+        if self.preload and not mem_cache:
             raise ValueError("preload=True requires cache=True.")
         if self.cache_size is not None:
-            if not self.cache:
+            if not mem_cache:
                 raise ValueError("cache_size requires cache=True.")
             if self.cache_size < 1:
                 raise ValueError("cache_size must be >= 1 (or None for unbounded).")
@@ -110,6 +119,10 @@ class IndexedPatchView(Sequence[Patch]):
         if i < 0 or i >= len(self._anchors):
             raise IndexError(
                 f"IndexedPatchView index {idx} out of range [0, {len(self._anchors)})"
+            )
+        if self._disk_cache is not None:
+            return self.patcher.patch_at(
+                self.field, self._anchors[i], cache=self._disk_cache
             )
         if self.cache:
             with self._cache_lock:

@@ -8,15 +8,23 @@ into backend-specific indices. Five samplers cover the common cases:
 - `SpatialRandom` — N uniformly-random anchors (training-time augmentation).
 - `SpatialPoissonDisk` — well-spaced random anchors via Bridson's algorithm.
 - `SpatialExplicit` — caller-supplied anchors (event-triggered, station list, …).
+- `SpatialExplicitCoords` — caller-supplied world coordinates, optionally in a
+  foreign CRS, with a chip centred on each (event / plume catalogues, …).
 - `SpatialAlongTrack` — anchors along an ordered track, optionally resampled
   to a fixed along-track spacing (altimetry ground tracks, flight lines, …).
+
+Coordinate-consuming samplers (`SpatialAlongTrack`, `SpatialExplicitCoords`)
+accept a ``crs=`` for anchors expressed in a CRS other than the domain's —
+the coordinates are reprojected to the domain CRS before the pixel mapping.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from functools import lru_cache
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 
@@ -369,38 +377,38 @@ class SpatialAlongTrack(SpatialSampler):
         spacing: Along-track resampling distance in coordinate units, or
             ``None`` to anchor at the original vertices. Requires at
             least two distinct vertices when set.
+        crs: CRS the ``track`` coordinates are expressed in. When set and
+            different from ``domain.crs``, the track is reprojected to the
+            domain CRS before anchoring; the ``spacing`` resample then runs
+            in domain-CRS units. ``None`` (default) assumes the track is
+            already in the domain's CRS (bit-identical to the old path).
+        polar_guard: Behaviour when a *geographic* ``crs`` places points
+            beyond ±80° latitude or a track straddles the ±180°
+            antimeridian — reprojection is unreliable there. ``"warn"``
+            (default) emits a `RuntimeWarning`, ``"raise"`` errors,
+            ``"ignore"`` is silent.
     """
 
     track: Any
     spacing: float | None = None
+    crs: Any | None = None
+    polar_guard: Literal["warn", "raise", "ignore"] = "warn"
 
     def __post_init__(self) -> None:
         self.track = _track_coords(self.track)
         if self.spacing is not None and self.spacing <= 0:
             raise ValueError(f"spacing must be positive, got {self.spacing}")
+        _validate_polar_guard(self.polar_guard)
 
     def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
-        points = self._resampled()
+        track = self.track
+        if self.crs is not None:
+            track = _to_domain_crs(
+                track, self.crs, _domain_crs(domain), self.polar_guard
+            )
+        points = self._resampled(track)
         if _is_raster_domain(domain):
-            h, w = int(domain.shape[-2]), int(domain.shape[-1])
-            size = getattr(geometry, "size", (1, 1))
-            ph, pw = int(size[-2]), int(size[-1])
-            boundary = getattr(geometry, "boundary", "drop")
-            if boundary == "drop":
-                rmax, cmax = max(h - ph, 0), max(w - pw, 0)
-            else:
-                rmax, cmax = h - 1, w - 1
-            inv = ~domain.transform
-            for x, y in points:
-                col_f, row_f = inv * (float(x), float(y))
-                r, c = int(np.floor(row_f)), int(np.floor(col_f))
-                if not (0 <= r < h and 0 <= c < w):
-                    continue
-                # Upper-left corner that centres the patch on the pixel.
-                yield (
-                    min(rmax, max(0, r - ph // 2)),
-                    min(cmax, max(0, c - pw // 2)),
-                )
+            yield from _raster_center_anchors(points, domain, geometry)
             return
         if isinstance(domain, PointDomain):
             for x, y in points:
@@ -410,9 +418,9 @@ class SpatialAlongTrack(SpatialSampler):
             f"SpatialAlongTrack doesn't support {type(domain).__name__} domains."
         )
 
-    def _resampled(self) -> np.ndarray:
+    def _resampled(self, track: np.ndarray | None = None) -> np.ndarray:
         """Return track vertices, resampled to `spacing` when it is set."""
-        pts = np.asarray(self.track, dtype=float)
+        pts = np.asarray(self.track if track is None else track, dtype=float)
         if self.spacing is None:
             return pts
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
@@ -434,7 +442,176 @@ class SpatialAlongTrack(SpatialSampler):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"n_points": len(self.track), "spacing": self.spacing}
+        return {
+            "n_points": len(self.track),
+            "spacing": self.spacing,
+            "crs": None if self.crs is None else str(self.crs),
+            "polar_guard": self.polar_guard,
+        }
+
+
+@dataclass(eq=False)
+class SpatialExplicitCoords(SpatialSampler):
+    """Caller-supplied world coordinates, one centred chip per coordinate.
+
+    The coordinate analogue of `SpatialExplicit` (which passes
+    backend-native anchors through untouched): each ``(x, y)`` is a world
+    coordinate, optionally in a foreign ``crs``, and the yielded anchor is
+    the upper-left corner that **centres** the geometry's patch on the
+    pixel that coordinate lands in — the same geo→pixel→centred-UL contract
+    as `SpatialAlongTrack`. Coordinates outside the raster are skipped.
+    On a `PointDomain`, the (reprojected) ``(x, y)`` is yielded directly.
+
+    Args:
+        coords: Ordered ``(N, 2)`` array of ``(x, y)`` world coordinates,
+            or any track-like object (`GeoDataFrame` / `GeoSeries` /
+            `LineString`) `SpatialAlongTrack` accepts.
+        crs: CRS the coordinates are in. When set and different from
+            ``domain.crs`` they are reprojected to the domain CRS before
+            the pixel mapping. ``None`` (default) assumes the domain's CRS.
+        polar_guard: Same geographic-edge guard as `SpatialAlongTrack`.
+
+    A single centred read without the patcher is also available via
+    `georeader.read.read_from_center_coords(reader, xy, shape,
+    crs_center_coords=...)`.
+    """
+
+    coords: Any
+    crs: Any | None = None
+    polar_guard: Literal["warn", "raise", "ignore"] = "warn"
+
+    def __post_init__(self) -> None:
+        self.coords = _track_coords(self.coords)
+        _validate_polar_guard(self.polar_guard)
+
+    def anchors(self, domain: Any, geometry: SpatialGeometry) -> Iterator[Any]:
+        points = self.coords
+        if self.crs is not None:
+            points = _to_domain_crs(
+                points, self.crs, _domain_crs(domain), self.polar_guard
+            )
+        if _is_raster_domain(domain):
+            yield from _raster_center_anchors(points, domain, geometry)
+            return
+        if isinstance(domain, PointDomain):
+            for x, y in points:
+                yield (float(x), float(y))
+            return
+        raise NotImplementedError(
+            f"SpatialExplicitCoords doesn't support {type(domain).__name__} domains."
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "n_coords": len(self.coords),
+            "crs": None if self.crs is None else str(self.crs),
+            "polar_guard": self.polar_guard,
+        }
+
+
+def _raster_center_anchors(
+    points: Any, domain: Any, geometry: SpatialGeometry
+) -> Iterator[tuple[int, int]]:
+    """Map world coords to centred upper-left anchors on a raster domain.
+
+    Shared by `SpatialAlongTrack` and `SpatialExplicitCoords`: each point
+    goes through the inverse affine to a pixel, and the yielded anchor is
+    the UL corner that centres the geometry's patch on it. Points outside
+    the raster are skipped; anchors are clamped to keep the patch in-domain
+    under the default ``"drop"`` boundary.
+    """
+    h, w = int(domain.shape[-2]), int(domain.shape[-1])
+    size = getattr(geometry, "size", (1, 1))
+    ph, pw = int(size[-2]), int(size[-1])
+    boundary = getattr(geometry, "boundary", "drop")
+    if boundary == "drop":
+        rmax, cmax = max(h - ph, 0), max(w - pw, 0)
+    else:
+        rmax, cmax = h - 1, w - 1
+    inv = ~domain.transform
+    for x, y in points:
+        col_f, row_f = inv * (float(x), float(y))
+        r, c = int(np.floor(row_f)), int(np.floor(col_f))
+        if not (0 <= r < h and 0 <= c < w):
+            continue
+        yield (min(rmax, max(0, r - ph // 2)), min(cmax, max(0, c - pw // 2)))
+
+
+def _validate_polar_guard(policy: str) -> None:
+    if policy not in ("warn", "raise", "ignore"):
+        raise ValueError(
+            f"invalid polar_guard {policy!r}; expected 'warn', 'raise', or 'ignore'."
+        )
+
+
+def _domain_crs(domain: Any) -> Any:
+    crs = getattr(domain, "crs", None)
+    if crs is None:
+        raise ValueError(
+            "cannot reproject anchors: the domain exposes no CRS. Provide "
+            "coordinates already in the domain's grid and leave crs=None."
+        )
+    return crs
+
+
+@lru_cache(maxsize=128)
+def _transformer(src: str, dst: str) -> Any:
+    import pyproj
+
+    return pyproj.Transformer.from_crs(src, dst, always_xy=True)
+
+
+def _to_domain_crs(
+    coords: Any, src_crs: Any, dst_crs: Any, polar_guard: str
+) -> np.ndarray:
+    """Reproject ``(N, 2)`` xy from ``src_crs`` to ``dst_crs``.
+
+    A no-op (returns the coordinates unchanged) when the two CRSs compare
+    equal, so ``crs`` equal to the domain CRS is bit-identical to
+    ``crs=None``.
+    """
+    coords = np.asarray(coords, dtype=float)
+    from georeader import compare_crs
+
+    if compare_crs(str(src_crs), str(dst_crs)):
+        return coords
+    _polar_dateline_check(coords, src_crs, polar_guard)
+    transformer = _transformer(str(src_crs), str(dst_crs))
+    xs, ys = transformer.transform(coords[:, 0], coords[:, 1])
+    return np.column_stack([np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)])
+
+
+def _polar_dateline_check(coords: np.ndarray, src_crs: Any, policy: str) -> None:
+    """Warn / raise when a geographic source CRS hits unreliable reprojection.
+
+    Only meaningful for a geographic (lon/lat) source CRS: near the poles
+    (``|lat| > 80``) and across the ±180° antimeridian the planar
+    transform is untrustworthy.
+    """
+    if policy == "ignore":
+        return
+    import pyproj
+
+    crs = pyproj.CRS.from_user_input(src_crs)
+    if not crs.is_geographic:
+        return
+    lon, lat = coords[:, 0], coords[:, 1]
+    problems = []
+    if lat.size and np.any(np.abs(lat) > 80.0):
+        problems.append("a latitude beyond ±80°")
+    if lon.size > 1 and np.any(np.abs(np.diff(lon)) > 180.0):
+        problems.append("a step across the ±180° antimeridian")
+    if not problems:
+        return
+    message = (
+        "reprojecting geographic coordinates with "
+        + " and ".join(problems)
+        + " is unreliable; set polar_guard='ignore' to silence or "
+        "'raise' to fail."
+    )
+    if policy == "raise":
+        raise ValueError(message)
+    warnings.warn(message, RuntimeWarning, stacklevel=3)
 
 
 def _track_coords(track: Any) -> np.ndarray:

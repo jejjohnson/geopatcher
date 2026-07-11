@@ -83,6 +83,7 @@ top level.
 | `src/geopatcher/_src/hooks.py`        | `PatcherHook` callback protocol + dispatch             |
 | `src/geopatcher/_src/indexed.py`      | `IndexedPatchView` random-access Sequence wrapper      |
 | `src/geopatcher/_src/journal.py`      | `PatchJournal` resumable-job journal                   |
+| `src/geopatcher/_src/cache.py`        | `PatchCache` content-addressed on-disk patch cache     |
 | `src/geopatcher/_src/prefetch.py`     | `prefetch_iterable` background prefetching             |
 | `src/geopatcher/_src/stacking.py`     | `stack_patches`                                        |
 | `src/geopatcher/_src/objstore.py`     | Pooled obstore clients for `ObstoreCogField`           |

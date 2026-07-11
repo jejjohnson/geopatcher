@@ -46,6 +46,7 @@ from geopatcher._src.spatial.patcher import (
 from geopatcher._src.spatial.sampler import (
     SpatialAlongTrack,
     SpatialExplicit,
+    SpatialExplicitCoords,
     SpatialJitteredStride,
     SpatialPoissonDisk,
     SpatialRandom,
@@ -74,6 +75,7 @@ __all__ = [
     "SpatialByIndex",
     "SpatialCustom",
     "SpatialExplicit",
+    "SpatialExplicitCoords",
     "SpatialGaussian",
     "SpatialGeometry",
     "SpatialHann",
