@@ -27,8 +27,14 @@ from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.domains import GridDomain, PointDomain, VectorDomain
 
 
-BoundaryMode = Literal["drop", "pad", "shrink", "raise"]
-_VALID_BOUNDARY_MODES: tuple[str, ...] = ("drop", "pad", "shrink", "raise")
+BoundaryMode = Literal["drop", "pad", "shrink", "raise", "reflect"]
+_VALID_BOUNDARY_MODES: tuple[str, ...] = (
+    "drop",
+    "pad",
+    "shrink",
+    "raise",
+    "reflect",
+)
 
 
 def _is_raster_domain(domain: Any) -> bool:
@@ -87,27 +93,34 @@ class SpatialRectangular(SpatialGeometry):
         boundary: How to treat anchors whose patch would overflow the
             domain edge. ``"drop"`` (default — current behavior) clips
             the sampler so overflowing anchors are never placed.
-            ``"pad"`` emits edge anchors and relies on the field's
-            boundless read to fill out-of-bounds pixels (typically with
-            the reader's nodata). ``"shrink"`` clips the returned Window
-            so the patch becomes smaller at the edge. ``"raise"`` emits
-            edge anchors and raises at split time. See `BoundaryMode`.
+            ``"pad"`` emits edge anchors and fills out-of-bounds pixels
+            with the reader's nodata (or ``pad_value`` when set).
+            ``"reflect"`` emits edge anchors and mirror-pads the
+            out-of-bounds region from the in-domain interior — the
+            spectrally correct choice for overlap-add stitching with
+            tapered windows (no DC dip at the scene boundary).
+            ``"shrink"`` clips the returned Window so the patch becomes
+            smaller at the edge. ``"raise"`` emits edge anchors and
+            raises at split time. See `BoundaryMode`.
 
             Only honored on raster domains in v0.x; GridDomain treats
             every mode as ``"drop"`` until an xarray-pad story lands.
 
-            **Caveat for ``"pad"``:** the boundless-read contract is
-            satisfied by `RasterField` / `AsyncRasterField` (which
-            delegate to ``GeoData.read_from_window(window, boundless=True)``)
-            but not by `RioXarrayField`, whose ``select`` clips via
-            ``isel``. On a `RioXarrayField`, ``boundary="pad"`` will
-            silently behave like ``"shrink"`` — wrap the data in
-            `RasterField` if you need true padding, or use ``"shrink"``
-            explicitly.
+            ``"pad"`` and ``"reflect"`` are guaranteed by the patcher
+            itself — the overflowing window is clipped to the domain,
+            read once, then padded up to the full geometry size. This is
+            field-independent: it works identically for `RasterField`,
+            `RioXarrayField`, and any other `Field`, with the chip's
+            georeferencing (transform origin) shifted to stay exact.
+        pad_value: Constant fill for ``boundary="pad"``. When ``None``
+            (default) the out-of-bounds region is filled with the
+            reader's nodata; set a float to force a specific constant.
+            Ignored by every other boundary mode.
     """
 
     size: tuple[int, ...]
     boundary: BoundaryMode = "drop"
+    pad_value: float | None = None
 
     def __post_init__(self) -> None:
         if self.boundary not in _VALID_BOUNDARY_MODES:

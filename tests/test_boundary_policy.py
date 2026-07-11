@@ -40,7 +40,7 @@ from geopatcher import (
 # Match the BoundaryMode literal defined in
 # `geopatcher._src.spatial.geometry`. Re-declared locally so the test
 # module doesn't reach into private code just for typing.
-BoundaryMode = Literal["drop", "pad", "shrink", "raise"]
+BoundaryMode = Literal["drop", "pad", "shrink", "raise", "reflect"]
 
 
 def _patcher(boundary: BoundaryMode) -> SpatialPatcher:
@@ -111,7 +111,7 @@ class TestRectangularBoundary:
 
     def test_invalid_mode_rejected(self) -> None:
         with pytest.raises(ValueError, match="invalid boundary mode"):
-            SpatialRectangular(size=(16, 16), boundary="reflect")  # type: ignore[arg-type]
+            SpatialRectangular(size=(16, 16), boundary="wrap")  # type: ignore[arg-type]
 
     def test_config_round_trips_boundary(self) -> None:
         geom = SpatialRectangular(size=(16, 16), boundary="pad")
@@ -135,7 +135,7 @@ class TestAlignedDomainIsUnchanged:
         )
         return RasterField(gt)
 
-    @pytest.mark.parametrize("boundary", ["drop", "pad", "shrink", "raise"])
+    @pytest.mark.parametrize("boundary", ["drop", "pad", "shrink", "raise", "reflect"])
     def test_aligned_domain_anchor_count(
         self, aligned_field: RasterField, boundary: str
     ) -> None:
@@ -233,3 +233,97 @@ class TestBoundaryHonoredByAllRasterSamplers:
         for patch in patcher.split(misaligned_field):
             r, c = patch.anchor
             assert r + 16 <= 70 and c + 16 <= 70
+
+
+def _arange_field(n: int = 10) -> RasterField:
+    """``n x n`` field of ``arange`` values on an identity transform."""
+    arr = np.arange(n * n, dtype=np.float32).reshape(n, n)
+    gt = GeoTensor(values=arr, transform=rasterio.Affine.identity(), crs="EPSG:32630")
+    return RasterField(gt)
+
+
+def _corner_patcher(
+    boundary: BoundaryMode, size: int = 4, pad_value: float | None = None
+) -> SpatialPatcher:
+    return SpatialPatcher(
+        geometry=SpatialRectangular(
+            size=(size, size), boundary=boundary, pad_value=pad_value
+        ),
+        sampler=SpatialRegularStride(step=size),
+        window=SpatialBoxcar(),
+        aggregation=SpatialOverlapAdd(),
+    )
+
+
+class TestReflectAndPadValue:
+    """`boundary="reflect"` and `pad_value` — the remainder of issue #19.
+
+    Field-independent clip-and-pad: the overflowing window is clipped to
+    the domain, read once, then padded up to the full geometry size.
+    """
+
+    def test_reflect_edge_equals_numpy_pad_of_clipped_read(self) -> None:
+        # 11x11 field, patch 4, stride 4 → anchors 0, 4, 8. Anchor (8, 8)
+        # covers rows/cols 8..11; row/col 11 is out of domain, so the
+        # clipped read is raw[8:11, 8:11] (3x3) and the overflow is 1.
+        field = _arange_field(11)
+        raw = np.asarray(field.reader.values)
+        patcher = _corner_patcher("reflect", size=4)
+        patches = {p.anchor: p for p in patcher.split(field)}
+        corner = patches[(8, 8)]
+        expected = np.pad(raw[8:11, 8:11], ((0, 1), (0, 1)), mode="reflect")
+        np.testing.assert_array_equal(corner.data.values, expected)
+        assert corner.data.values.shape == (4, 4)
+
+    def test_reflect_interior_anchor_is_untouched(self) -> None:
+        # An in-domain window takes the plain read path — no padding.
+        field = _arange_field(11)
+        raw = np.asarray(field.reader.values)
+        patcher = _corner_patcher("reflect", size=4)
+        interior = {p.anchor: p for p in patcher.split(field)}[(0, 0)]
+        np.testing.assert_array_equal(interior.data.values, raw[0:4, 0:4])
+
+    def test_pad_value_fills_overflow_region(self) -> None:
+        field = _arange_field(10)
+        raw = np.asarray(field.reader.values)
+        patcher = _corner_patcher("pad", size=4, pad_value=-999.0)
+        corner = {p.anchor: p for p in patcher.split(field)}[(8, 8)]
+        assert corner.data.values.shape == (4, 4)
+        # In-domain quadrant preserved …
+        np.testing.assert_array_equal(corner.data.values[0:2, 0:2], raw[8:10, 8:10])
+        # … overflow filled with the requested constant.
+        assert np.all(corner.data.values[2:, :] == -999.0)
+        assert np.all(corner.data.values[:, 2:] == -999.0)
+
+    def test_edge_chip_keeps_exact_georeferencing(self) -> None:
+        # Overflow is bottom/right only → the UL origin is unchanged and,
+        # on an identity transform, equals the anchor.
+        field = _arange_field(10)
+        patcher = _corner_patcher("pad", size=4)
+        corner = {p.anchor: p for p in patcher.split(field)}[(8, 8)]
+        assert corner.data.transform.c == 8
+        assert corner.data.transform.f == 8
+
+    def test_reflect_raises_when_overflow_exceeds_extent(self) -> None:
+        # 10x10 field, patch 4, anchor (8, 8): clipped is 2x2 but reflect
+        # needs pad (2) < extent (2). Must raise a clear error.
+        field = _arange_field(10)
+        patcher = _corner_patcher("reflect", size=4)
+        with pytest.raises(ValueError, match="reflect"):
+            list(patcher.split(field))
+
+    def test_pad_none_matches_boundless_read(self) -> None:
+        # With pad_value=None the clip-and-pad path must reproduce the old
+        # boundless read (fill_value_default) bit-for-bit.
+        field = _arange_field(10)
+        patcher = _corner_patcher("pad", size=4)
+        corner = {p.anchor: p for p in patcher.split(field)}[(8, 8)]
+        boundless = field.reader.read_from_window(corner.indices, boundless=True)
+        np.testing.assert_array_equal(corner.data.values, np.asarray(boundless.values))
+
+    def test_config_round_trips_pad_value(self) -> None:
+        geom = SpatialRectangular(size=(16, 16), boundary="pad", pad_value=0.0)
+        cfg = geom.get_config()
+        assert cfg["boundary"] == "pad"
+        assert cfg["pad_value"] == 0.0
+        assert SpatialRectangular(size=(16, 16)).get_config()["pad_value"] is None

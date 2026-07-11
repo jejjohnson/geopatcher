@@ -127,6 +127,7 @@ class SpatialPatcher:
         *,
         prefetch: int = 0,
         journal: Any | None = None,
+        cache: Any | None = None,
         max_in_flight: int | None = None,
         max_in_flight_bytes: int | None = None,
     ) -> Iterator[Patch]:
@@ -140,6 +141,12 @@ class SpatialPatcher:
         returns leaked slots eventually, but it is a safety net, not the
         mechanism — relying on it can stall this iterator until the
         collector runs.
+
+        A `PatchCache` passed as ``cache`` is consulted before every
+        read: on a hit the source is never touched (only ``field.domain``
+        metadata is), on a miss the patch is read then stored. Composes
+        with ``journal`` (which records completion) and ``prefetch``
+        (the cache check runs in the producer thread).
         """
         _validate_backpressure(max_in_flight, max_in_flight_bytes)
         return prefetch_iterable(
@@ -147,6 +154,7 @@ class SpatialPatcher:
                 field,
                 hooks=hooks,
                 journal=journal,
+                cache=cache,
                 max_in_flight=max_in_flight,
                 max_in_flight_bytes=max_in_flight_bytes,
             ),
@@ -159,12 +167,14 @@ class SpatialPatcher:
         *,
         hooks: Iterable[PatcherHook] | None = None,
         journal: Any | None = None,
+        cache: Any | None = None,
         max_in_flight: int | None = None,
         max_in_flight_bytes: int | None = None,
     ) -> Iterator[Patch]:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
+        cache_ctx = self._cache_context(cache, field)
         hook_list = _as_hooks(hooks)
         slots = (
             BoundedSemaphore(value=max_in_flight) if max_in_flight is not None else None
@@ -174,19 +184,22 @@ class SpatialPatcher:
             for anchor in self.sampler.anchors(domain, self.geometry):
                 if journal is not None and journal.has(anchor):
                     continue
-                patch = _build_patch_with_policy(
-                    field=field,
-                    domain=domain,
-                    anchor=anchor,
-                    geometry=self.geometry,
-                    base_weights=base_weights,
-                    boundary=boundary,
-                    on_error=self.on_error,
-                    max_retries=self.max_retries,
-                    retry_on=self.retry_on,
-                    errors=self.errors,
-                    capture_traceback=self.capture_traceback,
-                )
+                patch = self._cached_patch(cache_ctx, domain, anchor)
+                if patch is None:
+                    patch = _build_patch_with_policy(
+                        field=field,
+                        domain=domain,
+                        anchor=anchor,
+                        geometry=self.geometry,
+                        base_weights=base_weights,
+                        boundary=boundary,
+                        on_error=self.on_error,
+                        max_retries=self.max_retries,
+                        retry_on=self.retry_on,
+                        errors=self.errors,
+                        capture_traceback=self.capture_traceback,
+                    )
+                    self._store_patch(cache_ctx, anchor, patch)
                 if patch is not None:
                     release = _acquire_backpressure(patch, slots, byte_budget)
                     if release is not None:
@@ -204,20 +217,24 @@ class SpatialPatcher:
                 _dispatch(hook_list, "on_patch_start", anchor)
                 start = perf_counter()
                 errors_before = len(self.errors)
+                cached = self._cached_patch(cache_ctx, domain, anchor)
                 try:
-                    patch = _build_patch_with_policy(
-                        field=field,
-                        domain=domain,
-                        anchor=anchor,
-                        geometry=self.geometry,
-                        base_weights=base_weights,
-                        boundary=boundary,
-                        on_error=self.on_error,
-                        max_retries=self.max_retries,
-                        retry_on=self.retry_on,
-                        errors=self.errors,
-                        capture_traceback=self.capture_traceback,
-                    )
+                    patch = cached
+                    if patch is None:
+                        patch = _build_patch_with_policy(
+                            field=field,
+                            domain=domain,
+                            anchor=anchor,
+                            geometry=self.geometry,
+                            base_weights=base_weights,
+                            boundary=boundary,
+                            on_error=self.on_error,
+                            max_retries=self.max_retries,
+                            retry_on=self.retry_on,
+                            errors=self.errors,
+                            capture_traceback=self.capture_traceback,
+                        )
+                        self._store_patch(cache_ctx, anchor, patch)
                 except Exception as exc:
                     _dispatch(hook_list, "on_error", anchor, exc)
                     raise
@@ -309,7 +326,7 @@ class SpatialPatcher:
         finally:
             _dispatch(hook_list, "on_split_end")
 
-    def patch_at(self, field: Field, anchor: Any) -> Patch:
+    def patch_at(self, field: Field, anchor: Any, *, cache: Any | None = None) -> Patch:
         """Read a single `Patch` at a specific anchor.
 
         The same geometry → ``field.select`` → window-weights pipeline
@@ -325,6 +342,9 @@ class SpatialPatcher:
                 (e.g. ``(row, col)`` for raster, ``dict`` for grid).
                 Typically obtained from
                 ``patcher.anchors(field)[index]``.
+            cache: Optional `PatchCache`. When set, a cache hit returns
+                the stored patch without touching the source; a miss
+                reads then stores it.
 
         Returns:
             A single `Patch` bit-identical to the one ``split`` would
@@ -333,9 +353,41 @@ class SpatialPatcher:
         domain = field.domain
         base_weights = _safe_base_weights(self.window, self.geometry)
         boundary = getattr(self.geometry, "boundary", "drop")
-        return _build_patch(
+        cache_ctx = self._cache_context(cache, field)
+        cached = self._cached_patch(cache_ctx, domain, anchor)
+        if cached is not None:
+            return cached
+        patch = _build_patch(
             field, domain, anchor, self.geometry, base_weights, boundary
         )
+        self._store_patch(cache_ctx, anchor, patch)
+        return patch
+
+    def _cache_context(self, cache: Any | None, field: Field) -> Any | None:
+        """Bind ``cache`` to this field + config, or ``None`` when disabled."""
+        if cache is None:
+            return None
+        field_id = cache.field_id_for(field)
+        config_id = cache.config_id_for(self.geometry, self.window)
+        return (cache, field_id, config_id)
+
+    def _cached_patch(self, ctx: Any | None, domain: Any, anchor: Any) -> Patch | None:
+        """Return a cache-hit patch for ``anchor``, or ``None`` on a miss."""
+        if ctx is None:
+            return None
+        cache, field_id, config_id = ctx
+        payload = cache.get(field_id, config_id, anchor)
+        if payload is None:
+            return None
+        indices = self.geometry.neighborhood(domain, anchor)
+        return cache.build_patch(payload, anchor, indices)
+
+    def _store_patch(self, ctx: Any | None, anchor: Any, patch: Patch | None) -> None:
+        """Store a freshly-built ``patch`` under ``anchor`` when caching is on."""
+        if ctx is None or patch is None:
+            return
+        cache, field_id, config_id = ctx
+        cache.put(field_id, config_id, anchor, patch)
 
     def anchors(self, field: Field) -> list[Any]:
         """Materialise the sampler's anchor sequence for ``field``.
@@ -758,10 +810,11 @@ def _build_patch_with_policy(
 ) -> Patch | None:
     retries = max_retries if on_error == "retry" else 0
     indices = geometry.neighborhood(domain, anchor)
+    pad_value = getattr(geometry, "pad_value", None)
     for retry_count in range(retries + 1):
         try:
             return _build_patch_from_indices(
-                field, domain, anchor, indices, base_weights, boundary
+                field, domain, anchor, indices, base_weights, boundary, pad_value
             )
         except Exception as exc:
             # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
@@ -799,10 +852,11 @@ async def _build_patch_async_with_policy(
 ) -> Patch | None:
     retries = max_retries if on_error == "retry" else 0
     indices = geometry.neighborhood(domain, anchor)
+    pad_value = getattr(geometry, "pad_value", None)
     for retry_count in range(retries + 1):
         try:
             return await _build_patch_async_from_indices(
-                field, domain, anchor, indices, base_weights, boundary
+                field, domain, anchor, indices, base_weights, boundary, pad_value
             )
         except Exception as exc:
             # Preserve KeyboardInterrupt/SystemExit by handling only Exception.
@@ -965,7 +1019,13 @@ def _build_patch(
     """Single-anchor read pipeline shared by `split` and `patch_at`."""
     indices = geometry.neighborhood(domain, anchor)
     return _build_patch_from_indices(
-        field, domain, anchor, indices, base_weights, boundary
+        field,
+        domain,
+        anchor,
+        indices,
+        base_weights,
+        boundary,
+        getattr(geometry, "pad_value", None),
     )
 
 
@@ -976,10 +1036,15 @@ def _build_patch_from_indices(
     indices: Any,
     base_weights: np.ndarray | None,
     boundary: str,
+    pad_value: float | None = None,
 ) -> Patch:
     if boundary == "raise":
         _raise_if_overflows(indices, domain)
-    data = field.select(_unwrap_for_select(indices))
+    window = _unwrap_for_select(indices)
+    if boundary in ("pad", "reflect"):
+        data = _select_padded(field, domain, window, boundary, pad_value)
+    else:
+        data = field.select(window)
     weights = _build_weights(indices, base_weights, boundary=boundary)
     return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
@@ -995,7 +1060,13 @@ async def _build_patch_async(
     """Async mirror of `_build_patch` — awaits `field.select`."""
     indices = geometry.neighborhood(domain, anchor)
     return await _build_patch_async_from_indices(
-        field, domain, anchor, indices, base_weights, boundary
+        field,
+        domain,
+        anchor,
+        indices,
+        base_weights,
+        boundary,
+        getattr(geometry, "pad_value", None),
     )
 
 
@@ -1006,10 +1077,15 @@ async def _build_patch_async_from_indices(
     indices: Any,
     base_weights: np.ndarray | None,
     boundary: str,
+    pad_value: float | None = None,
 ) -> Patch:
     if boundary == "raise":
         _raise_if_overflows(indices, domain)
-    data = await _select_async(field, _unwrap_for_select(indices))
+    window = _unwrap_for_select(indices)
+    if boundary in ("pad", "reflect"):
+        data = await _select_padded_async(field, domain, window, boundary, pad_value)
+    else:
+        data = await _select_async(field, window)
     weights = _build_weights(indices, base_weights, boundary=boundary)
     return Patch(data=data, anchor=anchor, indices=indices, weights=weights)
 
@@ -1125,6 +1201,129 @@ def _raise_if_overflows(indices: Any, domain: Any) -> None:
             f"patch window {indices!r} overflows the domain shape "
             f"({dh}, {dw}); set boundary='pad' or 'shrink' to allow."
         )
+
+
+def _overflows_window(window: Any, domain: Any) -> bool:
+    """True if a raster ``window`` extends past the ``domain`` edge."""
+    if not (hasattr(window, "row_off") and hasattr(window, "col_off")):
+        return False
+    if not (hasattr(domain, "shape") and len(domain.shape) >= 2):
+        return False
+    dh, dw = int(domain.shape[-2]), int(domain.shape[-1])
+    r0, c0 = int(window.row_off), int(window.col_off)
+    rh, cw = int(window.height), int(window.width)
+    return r0 < 0 or c0 < 0 or r0 + rh > dh or c0 + cw > dw
+
+
+def _clip_pads(window: Any, domain: Any) -> tuple[Any, tuple[int, int, int, int]]:
+    """Clip ``window`` to the domain, returning ``(clipped, (t, b, l, r))``.
+
+    ``(t, b, l, r)`` are the pad widths that grow the clipped read back up
+    to the original window size on the top / bottom / left / right edges.
+    """
+    from rasterio.windows import Window
+
+    dh, dw = int(domain.shape[-2]), int(domain.shape[-1])
+    r0, c0 = int(window.row_off), int(window.col_off)
+    r1, c1 = r0 + int(window.height), c0 + int(window.width)
+    cr0, cc0 = max(r0, 0), max(c0, 0)
+    cr1, cc1 = min(r1, dh), min(c1, dw)
+    clipped = Window(
+        col_off=cc0,
+        row_off=cr0,
+        width=max(cc1 - cc0, 0),
+        height=max(cr1 - cr0, 0),
+    )
+    pads = (cr0 - r0, r1 - cr1, cc0 - c0, c1 - cc1)
+    return clipped, pads
+
+
+def _carrier_nodata(data: Any) -> Any:
+    """Best-effort nodata / fill value for a selected patch carrier."""
+    fill = getattr(data, "fill_value_default", None)
+    if fill is not None:
+        return fill
+    rio = getattr(getattr(data, "da", None), "rio", None)
+    if rio is not None and getattr(rio, "nodata", None) is not None:
+        return rio.nodata
+    return 0
+
+
+def _pad_carrier(
+    data: Any, pads: tuple[int, int, int, int], mode: str, fill: Any
+) -> Any:
+    """Pad a selected carrier up to full size, preserving georeferencing.
+
+    Handles a georeader `GeoTensor` (whose ``pad`` shifts the transform),
+    an xarray-backed field exposing ``.da``, and a plain ndarray.
+    """
+    pt, pb, pl, pr = pads
+    if pt == pb == pl == pr == 0:
+        return data
+    const = {"constant_values": fill} if mode == "constant" else {}
+    if hasattr(data, "pad") and hasattr(data, "transform"):
+        return data.pad({"y": (pt, pb), "x": (pl, pr)}, mode=mode, **const)
+    da = getattr(data, "da", None)
+    if da is not None:
+        y_dim, x_dim = da.rio.y_dim, da.rio.x_dim
+        padded = da.pad({y_dim: (pt, pb), x_dim: (pl, pr)}, mode=mode, **const)
+        return type(data)(padded)
+    arr = np.asarray(data)
+    pad_width = [(0, 0)] * (arr.ndim - 2) + [(pt, pb), (pl, pr)]
+    if mode == "constant":
+        return np.pad(arr, pad_width, mode="constant", constant_values=fill)
+    return np.pad(arr, pad_width, mode="reflect")
+
+
+def _reflect_guard(window: Any, clipped: Any, pads: tuple[int, int, int, int]) -> None:
+    """Raise a clear error when a reflect pad exceeds the in-domain extent."""
+    pt, pb, pl, pr = pads
+    ch, cw = int(clipped.height), int(clipped.width)
+    if pt >= ch or pb >= ch or pl >= cw or pr >= cw:
+        raise ValueError(
+            f"boundary='reflect' needs the in-domain extent to exceed the "
+            f"overflow on every side; window {window!r} clips to ({ch}, {cw}) "
+            f"but the pads are (top={pt}, bottom={pb}, left={pl}, right={pr}). "
+            f"Use boundary='pad' for overflows this large."
+        )
+
+
+def _select_padded(
+    field: Field, domain: Any, window: Any, boundary: str, pad_value: float | None
+) -> Any:
+    """Read ``window`` under ``pad`` / ``reflect``, padding overflow to full size.
+
+    Interior (non-overflowing) windows take the plain read path — the
+    padding machinery only engages at the domain edge.
+    """
+    if not _overflows_window(window, domain):
+        return field.select(window)
+    clipped, pads = _clip_pads(window, domain)
+    if boundary == "reflect":
+        _reflect_guard(window, clipped, pads)
+    data = field.select(clipped)
+    mode = "reflect" if boundary == "reflect" else "constant"
+    fill = pad_value if pad_value is not None else _carrier_nodata(data)
+    return _pad_carrier(data, pads, mode, fill)
+
+
+async def _select_padded_async(
+    field: AsyncField,
+    domain: Any,
+    window: Any,
+    boundary: str,
+    pad_value: float | None,
+) -> Any:
+    """Async mirror of `_select_padded`."""
+    if not _overflows_window(window, domain):
+        return await _select_async(field, window)
+    clipped, pads = _clip_pads(window, domain)
+    if boundary == "reflect":
+        _reflect_guard(window, clipped, pads)
+    data = await _select_async(field, clipped)
+    mode = "reflect" if boundary == "reflect" else "constant"
+    fill = pad_value if pad_value is not None else _carrier_nodata(data)
+    return _pad_carrier(data, pads, mode, fill)
 
 
 # Re-export `_is_raster_domain` to discourage cross-imports from geometry.py.

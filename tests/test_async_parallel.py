@@ -61,6 +61,34 @@ def test_spatial_asplit_matches_split(
         np.testing.assert_array_equal(async_patch.data, sync_patch.data)
 
 
+@pytest.mark.parametrize(
+    ("boundary", "n", "size"),
+    [("pad", 10, 4), ("reflect", 11, 4)],
+)
+def test_spatial_asplit_matches_split_boundary(
+    boundary: str, n: int, size: int
+) -> None:
+    # asplit must mirror split for the clip-and-pad edge modes (issue #19).
+    array = np.arange(n * n, dtype=np.float32).reshape(n, n)
+    patcher = SpatialPatcher(
+        geometry=SpatialRectangular(size=(size, size), boundary=boundary),
+        sampler=SpatialRegularStride(step=size),
+        window=SpatialBoxcar(),
+        aggregation=SpatialOverlapAdd(),
+    )
+
+    async def collect() -> list[Any]:
+        return [patch async for patch in patcher.asplit(AsyncArrayField(array))]
+
+    sync_patches = list(patcher.split(ArrayField(array)))
+    async_patches = asyncio.run(collect())
+    assert [p.anchor for p in async_patches] == [p.anchor for p in sync_patches]
+    for async_patch, sync_patch in zip(async_patches, sync_patches, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(async_patch.data), np.asarray(sync_patch.data)
+        )
+
+
 def test_spatial_split_prefetch_starts_background_read(patcher: SpatialPatcher) -> None:
     started = threading.Event()
     release = threading.Event()

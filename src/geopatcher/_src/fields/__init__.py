@@ -16,6 +16,7 @@ from geopatcher._src.fields.raster import (
     AsyncRasterField,
     RasterField,
 )
+from geopatcher._src.fields.reproject import ReprojectingRasterField
 
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "DaskField",
     "ObstoreCogField",
     "RasterField",
+    "ReprojectingRasterField",
 ]
 
 
