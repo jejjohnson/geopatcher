@@ -69,7 +69,7 @@ If you're already living inside `TemporalPatcher`, the stencil drops in
 as a Geometry + Sampler pair:
 
 ```python
-from geopatcher._src.fields.xarray import XarrayField
+from geopatcher.fields import XarrayField
 from geopatcher.time import (
     TimeStencil, TemporalPatcher,
     TemporalStencilGeometry, TemporalStencilSampler,

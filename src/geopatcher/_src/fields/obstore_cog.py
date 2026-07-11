@@ -48,9 +48,9 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import numpy as np
 
@@ -92,6 +92,30 @@ def _run_coroutine_safely(coro: Any) -> Any:
     return result_box["value"]
 
 
+async def _with_timeout(coro: Any, *, timeout: float | None, message: str) -> Any:
+    """Await ``coro``, bounded by ``timeout`` seconds.
+
+    Args:
+        coro: The coroutine to drive.
+        timeout: Seconds before giving up; ``None`` disables the bound.
+        message: What the coroutine was doing — embedded in the error.
+
+    Raises:
+        TimeoutError: The coroutine did not finish within ``timeout``
+            seconds. Named after ``message`` so a stalled read
+            identifies its URL / tile batch instead of hanging the
+            calling (or worker) thread forever.
+    """
+    if timeout is None:
+        return await coro
+    try:
+        return await asyncio.wait_for(coro, timeout)
+    except TimeoutError:
+        raise TimeoutError(
+            f"ObstoreCogField: {message} timed out after {timeout} s."
+        ) from None
+
+
 _INSTALL_HINT = (
     "ObstoreCogField requires the [obstore-cog] extra; install via "
     "`pip install 'geopatcher[obstore-cog]'`."
@@ -107,8 +131,14 @@ def _require_async_tiff() -> Any:
 
 
 def _uri_path(uri: str) -> str:
-    """Return the path component used as the obstore object key."""
-    return urlsplit(uri).path.lstrip("/")
+    """Return the key inside the pooled store for ``uri``.
+
+    Delegates to `geopatcher._src.objstore.object_key`, which handles
+    the Azure case (container segment lives in the store, not the key).
+    """
+    from geopatcher._src.objstore import object_key
+
+    return object_key(uri)
 
 
 # ---------------------------------------------------------------------------
@@ -133,12 +163,18 @@ class ObstoreCogDomain:
     res: tuple[float, float]
 
 
-def _dtype_from_ifd(ifd: Any) -> np.dtype:
+def _dtype_from_ifd(ifd: Any, *, url: str) -> np.dtype:
     """Derive a numpy dtype from the IFD's sample-format + bit-depth tags.
 
-    Falls back to ``float32`` when the tags can't be interpreted —
-    matches the historical behaviour of the empty-tile-range zero
-    fill in :func:`_assemble_window`, but only as a last resort.
+    Args:
+        ifd: The async-tiff ImageFileDirectory.
+        url: The COG's URL — used to name the file in errors.
+
+    Raises:
+        ValueError: The BitsPerSample / SampleFormat tags are missing,
+            unparseable, or describe an unsupported combination.
+            Failing loud beats silently reinterpreting pixel bytes
+            under a guessed dtype.
     """
     try:
         bps_raw = ifd.bits_per_sample
@@ -149,17 +185,29 @@ def _dtype_from_ifd(ifd: Any) -> np.dtype:
         sf = sf_raw[0] if hasattr(sf_raw, "__getitem__") else sf_raw
         # ``async_tiff.enums.SampleFormat`` exposes a ``.value`` int.
         sf_int = int(getattr(sf, "value", sf))
-    except (TypeError, ValueError, AttributeError, IndexError):
-        return np.dtype("float32")
+    except (TypeError, ValueError, AttributeError, IndexError) as exc:
+        raise ValueError(
+            f"ObstoreCogField: cannot derive a dtype for {url!r}: "
+            f"BitsPerSample={getattr(ifd, 'bits_per_sample', None)!r} / "
+            f"SampleFormat={getattr(ifd, 'sample_format', None)!r} "
+            f"could not be interpreted ({exc})."
+        ) from exc
 
     # SampleFormat: 1 = unsigned int, 2 = signed int, 3 = float.
-    if sf_int == 3:
-        return np.dtype(f"float{bps}")
-    if sf_int == 2:
-        return np.dtype(f"int{bps}")
-    if sf_int == 1:
-        return np.dtype(f"uint{bps}")
-    return np.dtype("float32")
+    prefix = {1: "uint", 2: "int", 3: "float"}.get(sf_int)
+    if prefix is None:
+        raise ValueError(
+            f"ObstoreCogField: unsupported SampleFormat {sf_int!r} in {url!r} "
+            "(expected 1=unsigned int, 2=signed int, 3=float)."
+        )
+    try:
+        return np.dtype(f"{prefix}{bps}")
+    except TypeError as exc:
+        raise ValueError(
+            f"ObstoreCogField: unsupported BitsPerSample {bps!r} for "
+            f"SampleFormat {sf_int!r} in {url!r} (no numpy dtype "
+            f"'{prefix}{bps}')."
+        ) from exc
 
 
 def _build_domain(ifd: Any) -> ObstoreCogDomain:
@@ -208,10 +256,12 @@ def _crs_from_geokeys(geo_keys: Any) -> Any:
 
     Handles the common cases: an EPSG ProjectedCSTypeGeoKey
     (``projected_type``) or GeographicTypeGeoKey (``geographic_type``).
-    Falls back to ``None`` for exotic GeoTIFFs — the user can re-wrap
-    with ``RasterField`` if needed.
+    Falls back to ``None`` for exotic GeoTIFFs — with a
+    ``RuntimeWarning`` when an EPSG code was present but unusable — so
+    the user can re-wrap with ``RasterField`` if needed.
     """
     from pyproj import CRS
+    from pyproj.exceptions import CRSError
 
     if geo_keys is None:
         return None
@@ -222,7 +272,13 @@ def _crs_from_geokeys(geo_keys: Any) -> Any:
         return None
     try:
         return CRS.from_epsg(int(epsg))
-    except Exception:
+    except (TypeError, ValueError, CRSError) as exc:
+        warnings.warn(
+            f"ObstoreCogField: could not build a CRS from GeoTIFF key "
+            f"EPSG:{epsg!r} ({exc}); domain.crs will be None.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return None
 
 
@@ -236,12 +292,24 @@ class ObstoreCogField:
     """Tiled-COG `Field` with batched range-fetch reads.
 
     Open via :meth:`from_url`; constructor takes the parsed handles.
+
+    Args:
+        url: Cloud URI the COG was opened from.
+        tiff: Parsed ``async_tiff.TIFF`` handle.
+        ifd: The selected ``async_tiff.ImageFileDirectory``.
+        domain: I/O-free metadata twin (see `ObstoreCogDomain`).
+        timeout: Per-network-operation deadline in seconds for tile
+            fetch + decode batches (`select` / `select_many`). ``None``
+            disables the bound. On expiry a :class:`TimeoutError` naming
+            the URL and tile batch is raised instead of hanging the
+            calling (or worker) thread forever on a stalled read.
     """
 
     url: str
     tiff: Any  # async_tiff.TIFF
     ifd: Any  # async_tiff.ImageFileDirectory
     domain: ObstoreCogDomain
+    timeout: float | None = 120.0
 
     @classmethod
     def from_url(
@@ -252,6 +320,7 @@ class ObstoreCogField:
         ifd_index: int = 0,
         store: Any = None,
         path: str | None = None,
+        timeout: float | None = 120.0,
     ) -> ObstoreCogField:
         """Open a remote COG, parse its IFD, return a ready field.
 
@@ -273,11 +342,16 @@ class ObstoreCogField:
                 doesn't fit the pool's environment-driven keying.
             path: Object key inside ``store``. Required when ``store``
                 is supplied; ignored otherwise (derived from ``url``).
+            timeout: Deadline in seconds for opening/parsing the COG
+                header, and (stored on the field) for each subsequent
+                tile fetch + decode batch. ``None`` disables the bound.
 
         Raises:
             ImportError: ``[obstore-cog]`` extra missing.
             ValueError: COG is striped (not tiled) or lacks the
                 GeoTIFF tags needed to derive an affine transform.
+            TimeoutError: Opening the COG took longer than ``timeout``
+                seconds.
         """
         async_tiff = _require_async_tiff()
 
@@ -295,7 +369,11 @@ class ObstoreCogField:
             object_path = path
 
         async def _open() -> Any:
-            return await async_tiff.TIFF.open(object_path, store=store)
+            return await _with_timeout(
+                async_tiff.TIFF.open(object_path, store=store),
+                timeout=timeout,
+                message=f"opening COG {url!r}",
+            )
 
         tiff = _run_coroutine_safely(_open())
         ifd = tiff.ifd(ifd_index)
@@ -305,7 +383,7 @@ class ObstoreCogField:
                 "striped TIFFs aren't supported. Use RasterField for those."
             )
         domain = _build_domain(ifd)
-        return cls(url=url, tiff=tiff, ifd=ifd, domain=domain)
+        return cls(url=url, tiff=tiff, ifd=ifd, domain=domain, timeout=timeout)
 
     def select(self, window: Window) -> np.ndarray:
         """Read one window via the COG's tile grid.
@@ -331,6 +409,10 @@ class ObstoreCogField:
         Returns:
             One ndarray per input window, in input order, each shaped
             ``(bands, height, width)`` matching the window.
+
+        Raises:
+            TimeoutError: The batched tile fetch + decode did not
+                finish within ``self.timeout`` seconds.
         """
         if len(windows) == 0:
             return []
@@ -361,7 +443,16 @@ class ObstoreCogField:
         # Reference the IFD attribute via a local so a monkeypatched
         # ``ifd.fetch_tiles`` (test hook) is picked up correctly.
         ifd = self.ifd
-        decoded = _run_coroutine_safely(_fetch_and_decode_tiles(ifd, coord_list))
+        decoded = _run_coroutine_safely(
+            _with_timeout(
+                _fetch_and_decode_tiles(ifd, coord_list),
+                timeout=self.timeout,
+                message=(
+                    f"fetching/decoding a batch of {len(coord_list)} tiles "
+                    f"from {self.url!r}"
+                ),
+            )
+        )
         # Map decoded tiles by coord for the assembly loop.
         tile_data: dict[tuple[int, int], np.ndarray] = dict(
             zip(coord_list, decoded, strict=True)
@@ -371,7 +462,7 @@ class ObstoreCogField:
         # path (window entirely outside the image) returns an array of
         # the right shape/dtype even when no tile was fetched.
         bands = int(self.ifd.samples_per_pixel)
-        dtype = _dtype_from_ifd(self.ifd)
+        dtype = _dtype_from_ifd(self.ifd, url=self.url)
 
         results: list[np.ndarray] = []
         for window, (tx_min, ty_min, tx_max, ty_max) in zip(

@@ -169,7 +169,7 @@ unresolved-attribute = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=src/geopatcher --cov-report=term-missing --cov-report=xml:coverage.xml"
+addopts = "--cov=src/geopatcher --cov-report=term-missing --cov-report=xml:coverage.xml --strict-markers"
 
 [tool.coverage.run]
 source = ["src/geopatcher"]
@@ -178,9 +178,7 @@ omit = ["tests/*"]
 [tool.coverage.report]
 show_missing = true
 # Approx* aggregations (sketch family) are stubs scheduled for v0.2 that
-# raise NotImplementedError; the streaming zarr path, Grid/Vector/Point
-# domain dispatches, and rio_xarray field require optional extras not
-# always installed in the baseline coverage run. CI re-runs the
-# extras-gated tests with deps installed and would hit higher than this
-# floor.
+# raise NotImplementedError, and some extras-gated paths skip in slim
+# local runs — hence a floor below the ~78% an all-extras run measures.
+# CI installs --all-extras, so the full suite runs there.
 fail_under = 65

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
 
 from geopatcher import (
-    RasterField,
     SpatialBoxcar,
     SpatialOverlapAdd,
     SpatialPatcher,
@@ -16,17 +13,6 @@ from geopatcher import (
     SpatialRegularStride,
 )
 from geopatcher._src.indexed import IndexedPatchView
-
-
-@pytest.fixture
-def field() -> RasterField:
-    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
-    gt = GeoTensor(
-        values=arr,
-        transform=rasterio.Affine.identity(),
-        crs="EPSG:32630",
-    )
-    return RasterField(gt)
 
 
 @pytest.fixture

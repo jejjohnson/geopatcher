@@ -65,7 +65,8 @@ memory.
 may be passed in for callers that need Dask / distributed writers to
 share the same store.
 
-**Context.** The streaming asymmetry (see `scaling.md` §4) is on the
+**Context.** The streaming asymmetry (see §4 of the `scaling.md`
+design note in the planning archive; not shipped with these docs) is on the
 *output* side: the input field already has a lazy `Field.select`, so
 input scales as long as `split` returns an iterator. Output
 preallocability is the bottleneck. A disk-backed accumulator solves it.
@@ -106,7 +107,12 @@ Zarr was picked over memmap, HDF5, and "bring your own store":
 
 ---
 
-## ADR-003 — `streaming_safe` violations: configurable, warn by default
+## ADR-006 — `streaming_safe` violations: configurable, warn by default
+
+> Renumbered from ADR-003 — that number had accidentally been assigned
+> twice. References to "ADR-003" for the `streaming_safe` /
+> `set_strict` decision (e.g. in `geopatcher._src.config`) resolve
+> here; ADR-003 now refers only to the `MatchedField` decision below.
 
 **Decision.** When a caller passes a `streaming_safe = False`
 aggregation into a context that expects streaming (`Patcher.merge`,

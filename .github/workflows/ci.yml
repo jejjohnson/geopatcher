@@ -26,7 +26,9 @@ jobs:
         # ``pytest.importorskip``:
         #   - ``streaming`` → zarr → tests/test_streaming_golden.py
         #   - ``obstore-cog`` → obstore + async-tiff → tests/test_obstore_cog_field.py
-        run: uv sync --group dev --extra streaming --extra obstore-cog
+        # All extras so the xarray / geopandas / xvec / rioxarray / dask /
+        # jax / pipekit test files actually run instead of importorskip-ing.
+        run: uv sync --group dev --all-extras
       - name: Run tests with coverage
         run: uv run pytest -v
       - name: Upload coverage report

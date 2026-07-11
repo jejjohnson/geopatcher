@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.time.geometry import TemporalGeometry
 
 
@@ -56,7 +57,7 @@ class TemporalExponentialDecay(TemporalWindow):
         return np.exp(-ages / max(self.tau, 1e-12))
 
     def get_config(self) -> dict[str, Any]:
-        return {"tau": self.tau}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -78,7 +79,7 @@ class TemporalTaperedTukey(TemporalWindow):
         return tukey(n, alpha=self.alpha, sym=False).astype(np.float64)
 
     def get_config(self) -> dict[str, Any]:
-        return {"alpha": self.alpha}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -100,4 +101,4 @@ class TemporalPeriodic(TemporalWindow):
         return np.ones(int(length), dtype=np.float64)
 
     def get_config(self) -> dict[str, Any]:
-        return {"period": self.period}
+        return config_from_fields(self)

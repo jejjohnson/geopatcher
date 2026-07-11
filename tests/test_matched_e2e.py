@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from _helpers import StubDomain as _StubDomain
 
 from geopatcher._src.matched import (
     MatchedField,
@@ -37,14 +38,13 @@ from geopatcher._src.matched.patch import PRIMARY_KEY
 
 
 @dataclass
-class _StubDomain:
-    crs: str = "EPSG:4326"
-    bounds: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
-
-
-@dataclass
 class _StubField:
-    """A `Field` whose `select(indexer)` returns ``f"{name}@{indexer}"``."""
+    """A `Field` whose `select(indexer)` returns ``f"{name}@{indexer}"``.
+
+    Deliberately NOT the shared `_helpers.StubField`: `with_data` here
+    returns an inspection tuple instead of echoing the array, so merge
+    tests can see what the aggregation produced.
+    """
 
     name: str
 

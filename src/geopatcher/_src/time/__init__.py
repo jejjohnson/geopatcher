@@ -4,7 +4,8 @@ The shape of the API mirrors `geopatcher.spatial` exactly —
 `TemporalGeometry`, `TemporalSampler`, `TemporalWindow`,
 `TemporalAggregation` bases with concrete axes that drop the
 ``Temporal`` prefix (the submodule path provides the context). See
-``design.md`` §5 for the time-axis framing.
+``docs/patching.md`` §"The four temporal axes" for the time-axis
+framing.
 """
 
 from __future__ import annotations

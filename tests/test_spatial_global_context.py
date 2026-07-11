@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import rasterio
-from georeader.geotensor import GeoTensor
 
 from geopatcher import (
     RasterField,
@@ -20,15 +18,8 @@ from geopatcher import (
 
 
 @pytest.fixture
-def field() -> RasterField:
-    arr = np.arange(16 * 16, dtype=np.float64).reshape(16, 16)
-    return RasterField(
-        GeoTensor(
-            values=arr,
-            transform=rasterio.Affine.identity(),
-            crs="EPSG:32630",
-        )
-    )
+def field(raster_field_factory) -> RasterField:
+    return raster_field_factory(16, dtype=np.float64)
 
 
 @pytest.fixture

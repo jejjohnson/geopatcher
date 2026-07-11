@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from _helpers import ArrField as _ArrField
 
 from geopatcher._src.matched import (
     MatchedField,
@@ -29,40 +30,11 @@ from geopatcher._src.time.window import TemporalCausalBoxcar
 
 
 # ---------------------------------------------------------------------------
-# Stub Field / Domain. Each `_ArrField.select(slice(None))` returns the
-# full underlying numpy series so the matched-temporal patcher can drive
-# the primary `TemporalPatcher` on it.
+# Stub Field / Domain live in tests/_helpers.py. Each
+# `_ArrField.select(slice(None))` returns the full underlying numpy
+# series so the matched-temporal patcher can drive the primary
+# `TemporalPatcher` on it.
 # ---------------------------------------------------------------------------
-
-
-class _StubDomain:
-    @property
-    def crs(self) -> Any:
-        return "EPSG:4326"
-
-    @property
-    def bounds(self) -> tuple[float, float, float, float]:
-        return (0.0, 0.0, 1.0, 1.0)
-
-
-class _ArrField:
-    """A `Field` whose `select(indexer)` returns a backing numpy array."""
-
-    def __init__(self, values: np.ndarray) -> None:
-        self._values = values
-        self._domain = _StubDomain()
-
-    @property
-    def domain(self) -> Any:
-        return self._domain
-
-    def select(self, indexer: Any) -> Any:
-        if isinstance(indexer, slice):
-            return self._values[indexer]
-        return self._values
-
-    def with_data(self, array: Any) -> Any:
-        return array
 
 
 class _RecordingTemporalAgg(TemporalAggregation):

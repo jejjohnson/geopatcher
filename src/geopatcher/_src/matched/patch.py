@@ -40,8 +40,61 @@ if TYPE_CHECKING:
 PRIMARY_KEY = "primary"
 
 
+class _MatchedMembersBase[MemberT]:
+    """Shared invariants and accessors for the matched patch carriers.
+
+    Not a dataclass itself — each concrete carrier declares its own
+    dataclass fields; this base only contributes the ``__post_init__``
+    validation and the ``primary`` / ``secondary_names`` accessors.
+    """
+
+    members: dict[str, MemberT]
+    valid_mask: dict[str, np.ndarray] | None
+    weights: dict[str, np.ndarray] | None
+
+    PRIMARY_KEY = PRIMARY_KEY
+
+    def __post_init__(self) -> None:
+        # Enforce the invariant the carrier docstrings promise: every
+        # matched patch carries a primary member under `PRIMARY_KEY`.
+        # Without this guard, a malformed construction only fails later
+        # at `mp.primary` access — much harder to debug.
+        cls_name = type(self).__name__
+        if PRIMARY_KEY not in self.members:
+            raise ValueError(
+                f"{cls_name}.members must contain the primary key "
+                f"{PRIMARY_KEY!r}; got keys {sorted(self.members)!r}."
+            )
+        # `valid_mask` / `weights` are per-member auxiliaries; their
+        # keys must be a subset of `members`, otherwise a stale mask
+        # silently rides along after a member is dropped.
+        member_keys = set(self.members)
+        for attr_name, attr in (
+            ("valid_mask", self.valid_mask),
+            ("weights", self.weights),
+        ):
+            if attr is None:
+                continue
+            extra = set(attr) - member_keys
+            if extra:
+                raise ValueError(
+                    f"{cls_name}.{attr_name} has keys not present in "
+                    f"members: {sorted(extra)!r}."
+                )
+
+    @property
+    def primary(self) -> MemberT:
+        """Convenience accessor for ``members[PRIMARY_KEY]``."""
+        return self.members[PRIMARY_KEY]
+
+    @property
+    def secondary_names(self) -> tuple[str, ...]:
+        """The keys of ``members`` other than the primary."""
+        return tuple(k for k in self.members if k != PRIMARY_KEY)
+
+
 @dataclass(eq=False)
-class MatchedPatch:
+class MatchedPatch(_MatchedMembersBase["Patch"]):
     """A co-located patch read from N sources at a single anchor.
 
     Args:
@@ -67,48 +120,9 @@ class MatchedPatch:
     valid_mask: dict[str, np.ndarray] | None = None
     weights: dict[str, np.ndarray] | None = field(default=None)
 
-    PRIMARY_KEY = PRIMARY_KEY
-
-    def __post_init__(self) -> None:
-        # Enforce the invariant the docstring promises: every
-        # `MatchedPatch` carries a primary member under `PRIMARY_KEY`.
-        # Without this guard, a malformed construction only fails later
-        # at `mp.primary` access — much harder to debug.
-        if PRIMARY_KEY not in self.members:
-            raise ValueError(
-                f"MatchedPatch.members must contain the primary key "
-                f"{PRIMARY_KEY!r}; got keys {sorted(self.members)!r}."
-            )
-        # `valid_mask` / `weights` are per-member auxiliaries; their
-        # keys must be a subset of `members`, otherwise a stale mask
-        # silently rides along after a member is dropped.
-        member_keys = set(self.members)
-        for attr_name, attr in (
-            ("valid_mask", self.valid_mask),
-            ("weights", self.weights),
-        ):
-            if attr is None:
-                continue
-            extra = set(attr) - member_keys
-            if extra:
-                raise ValueError(
-                    f"MatchedPatch.{attr_name} has keys not present in members: "
-                    f"{sorted(extra)!r}."
-                )
-
-    @property
-    def primary(self) -> Patch:
-        """Convenience accessor for ``members[PRIMARY_KEY]``."""
-        return self.members[PRIMARY_KEY]
-
-    @property
-    def secondary_names(self) -> tuple[str, ...]:
-        """The keys of ``members`` other than the primary."""
-        return tuple(k for k in self.members if k != PRIMARY_KEY)
-
 
 @dataclass(eq=False)
-class MatchedTemporalPatch:
+class MatchedTemporalPatch(_MatchedMembersBase["TemporalPatch"]):
     """A co-located temporal patch read from N sources at a single anchor.
 
     Sibling of `MatchedPatch` for the temporal axis. ``members`` holds
@@ -135,41 +149,9 @@ class MatchedTemporalPatch:
     valid_mask: dict[str, np.ndarray] | None = None
     weights: dict[str, np.ndarray] | None = field(default=None)
 
-    PRIMARY_KEY = PRIMARY_KEY
-
-    def __post_init__(self) -> None:
-        if PRIMARY_KEY not in self.members:
-            raise ValueError(
-                f"MatchedTemporalPatch.members must contain the primary key "
-                f"{PRIMARY_KEY!r}; got keys {sorted(self.members)!r}."
-            )
-        member_keys = set(self.members)
-        for attr_name, attr in (
-            ("valid_mask", self.valid_mask),
-            ("weights", self.weights),
-        ):
-            if attr is None:
-                continue
-            extra = set(attr) - member_keys
-            if extra:
-                raise ValueError(
-                    f"MatchedTemporalPatch.{attr_name} has keys not present in "
-                    f"members: {sorted(extra)!r}."
-                )
-
-    @property
-    def primary(self) -> TemporalPatch:
-        """Convenience accessor for ``members[PRIMARY_KEY]``."""
-        return self.members[PRIMARY_KEY]
-
-    @property
-    def secondary_names(self) -> tuple[str, ...]:
-        """The keys of ``members`` other than the primary."""
-        return tuple(k for k in self.members if k != PRIMARY_KEY)
-
 
 @dataclass(eq=False)
-class MatchedSpatioTemporalPatch:
+class MatchedSpatioTemporalPatch(_MatchedMembersBase["SpatioTemporalPatch"]):
     """A co-located spatio-temporal patch read from N sources.
 
     Sibling of `MatchedPatch` for the spatio-temporal axis. ``members``
@@ -193,35 +175,3 @@ class MatchedSpatioTemporalPatch:
     members: dict[str, SpatioTemporalPatch]
     valid_mask: dict[str, np.ndarray] | None = None
     weights: dict[str, np.ndarray] | None = field(default=None)
-
-    PRIMARY_KEY = PRIMARY_KEY
-
-    def __post_init__(self) -> None:
-        if PRIMARY_KEY not in self.members:
-            raise ValueError(
-                f"MatchedSpatioTemporalPatch.members must contain the primary key "
-                f"{PRIMARY_KEY!r}; got keys {sorted(self.members)!r}."
-            )
-        member_keys = set(self.members)
-        for attr_name, attr in (
-            ("valid_mask", self.valid_mask),
-            ("weights", self.weights),
-        ):
-            if attr is None:
-                continue
-            extra = set(attr) - member_keys
-            if extra:
-                raise ValueError(
-                    f"MatchedSpatioTemporalPatch.{attr_name} has keys not "
-                    f"present in members: {sorted(extra)!r}."
-                )
-
-    @property
-    def primary(self) -> SpatioTemporalPatch:
-        """Convenience accessor for ``members[PRIMARY_KEY]``."""
-        return self.members[PRIMARY_KEY]
-
-    @property
-    def secondary_names(self) -> tuple[str, ...]:
-        """The keys of ``members`` other than the primary."""
-        return tuple(k for k in self.members if k != PRIMARY_KEY)

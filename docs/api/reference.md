@@ -1,7 +1,9 @@
 # `geopatcher` — Patcher framework API
 
 Curated mkdocstrings reference, grouped by family. For the conceptual
-walkthrough see [Patching](../patching.md).
+walkthrough see [Patching](../patching.md). The matched multi-source
+family lives on its own page ([Matched patching](matched.md)), as do
+the framework bridges ([Integrations](integrations.md)).
 
 ## Carriers
 
@@ -9,9 +11,23 @@ walkthrough see [Patching](../patching.md).
 ::: geopatcher._src.patch.TemporalPatch
 ::: geopatcher._src.patch.SpatioTemporalPatch
 
+## Random access and stacking
+
+::: geopatcher._src.indexed.IndexedPatchView
+::: geopatcher._src.stacking.stack_patches
+
 ## Operational scale
 
 ::: geopatcher._src.journal.PatchJournal
+::: geopatcher.runners.parallel_map
+::: geopatcher._src.prefetch.prefetch_iterable
+
+## Strictness and errors
+
+::: geopatcher._src.config.get_strict
+::: geopatcher._src.config.set_strict
+::: geopatcher._src.exceptions.IncompleteScanConfiguration
+::: geopatcher._src.spatial.patcher.PatchErrorRecord
 
 ## Protocols
 
@@ -26,16 +42,27 @@ walkthrough see [Patching](../patching.md).
 ::: geopatcher._src.domains.VectorDomain
 ::: geopatcher._src.domains.PointDomain
 
+`RasterDomain` is the existing `GeoDataBase` protocol re-exported from
+[`georeader`](https://github.com/IPL-UV/georeader) — import it as
+`from geopatcher import RasterDomain`; see georeader's docs for the
+protocol members.
+
 ## Field adapters
 
 ::: geopatcher._src.fields.raster.RasterField
 ::: geopatcher._src.fields.raster.AsyncRasterField
 
-The non-raster adapters are extras-gated; import via the submodule path:
+The remaining adapters are extras-gated; import via the public
+submodule path:
 
 ```python
 from geopatcher.fields import XarrayField, GeoPandasField, XvecField
+from geopatcher.fields import RioXarrayField, DaskField, ObstoreCogField
 ```
+
+::: geopatcher._src.fields.rio_xarray.RioXarrayField
+::: geopatcher._src.fields.dask.DaskField
+::: geopatcher._src.fields.obstore_cog.ObstoreCogField
 
 ## Top-level patchers
 
@@ -84,6 +111,8 @@ from geopatcher.fields import XarrayField, GeoPandasField, XvecField
 ::: geopatcher._src.spatial.aggregation.SpatialInvVarWeightedMean
 ::: geopatcher._src.spatial.aggregation.SpatialMax
 ::: geopatcher._src.spatial.aggregation.SpatialMin
+::: geopatcher._src.spatial.aggregation.SpatialMeanStd
+::: geopatcher._src.spatial.aggregation.SpatialMinMax
 ::: geopatcher._src.spatial.aggregation.SpatialHardVote
 ::: geopatcher._src.spatial.aggregation.SpatialSoftVote
 ::: geopatcher._src.spatial.aggregation.SpatialByIndex
@@ -133,3 +162,22 @@ from geopatcher.fields import XarrayField, GeoPandasField, XvecField
 ::: geopatcher._src.time.aggregation.TemporalMean
 ::: geopatcher._src.time.aggregation.TemporalHierarchicalCombine
 ::: geopatcher._src.time.aggregation.TemporalForecast
+
+## Temporal stencils
+
+Coordinate-aware time windows (see ADR-004 and the
+[temporal stencils recipe](../recipes/temporal-stencils.md)). `Closed`
+is the `Literal["left", "right", "both", "neither"]` alias used by the
+stencil endpoints.
+
+::: geopatcher._src.time.stencils.Stencil
+::: geopatcher._src.time.stencils.TimeStencil
+::: geopatcher._src.time.stencils.build_sampling_slices
+::: geopatcher._src.time.stencils.divide_evenly
+::: geopatcher._src.time.stencils.valid_origin_points
+
+The four-axis integration points are documented with the other temporal
+axes above:
+
+::: geopatcher._src.time.geometry.TemporalStencilGeometry
+::: geopatcher._src.time.sampler.TemporalStencilSampler

@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Literal
 
 import numpy as np
 
+from geopatcher._src._serialize import config_from_fields
 from geopatcher._src.domains import GridDomain, PointDomain, VectorDomain
 
 
@@ -137,7 +138,7 @@ class SpatialRectangular(SpatialGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"size": list(self.size), "boundary": self.boundary}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -178,7 +179,7 @@ class SpatialSphericalCap(SpatialGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"radius_km": self.radius_km}
+        return config_from_fields(self)
 
 
 def _haversine_km(
@@ -230,7 +231,7 @@ class SpatialKNNGraph(SpatialGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"k": self.k, "metric": self.metric}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
@@ -269,7 +270,7 @@ class SpatialRadiusGraph(SpatialGeometry):
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"radius": self.radius, "metric": self.metric}
+        return config_from_fields(self)
 
 
 @dataclass(eq=False)
