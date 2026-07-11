@@ -63,6 +63,7 @@ from geopatcher.fields import XarrayField, GeoPandasField, XvecField
 ::: geopatcher._src.spatial.sampler.SpatialRandom
 ::: geopatcher._src.spatial.sampler.SpatialPoissonDisk
 ::: geopatcher._src.spatial.sampler.SpatialExplicit
+::: geopatcher._src.spatial.sampler.SpatialAlongTrack
 
 ### Window
 

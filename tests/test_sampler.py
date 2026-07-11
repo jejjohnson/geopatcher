@@ -157,3 +157,82 @@ class TestCheckFullScan:
         s = SpatialRegularStride(step=(6, 6), check_full_scan=True)
         cfg = s.get_config()
         assert cfg == {"step": [6, 6], "check_full_scan": True}
+
+
+class TestSpatialAlongTrack:
+    def test_vertices_used_when_no_spacing(self, raster_domain: GeoTensor) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        track = np.array([[8.5, 8.5], [24.5, 8.5], [40.5, 8.5]])
+        s = SpatialAlongTrack(track=track)
+        rect = SpatialRectangular(size=(4, 4))
+        anchors = list(s.anchors(raster_domain, rect))
+        # Identity transform: (x, y) -> pixel (row=y, col=x); anchors are
+        # the UL corners that centre the 4x4 patch on that pixel.
+        assert anchors == [(6, 6), (6, 22), (6, 38)]
+
+    def test_spacing_resamples_to_monotonic_distances(
+        self, raster_domain: GeoTensor
+    ) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        # Straight track of length 40, spacing 10 -> s = 0, 10, 20, 30, 40.
+        track = np.array([[10.0, 10.0], [50.0, 10.0]])
+        s = SpatialAlongTrack(track=track, spacing=10.0)
+        pts = s._resampled()
+        d = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        assert len(pts) == 5
+        np.testing.assert_allclose(d, 10.0)
+        np.testing.assert_allclose(np.diff(pts[:, 0]), 10.0)  # monotonic
+
+    def test_out_of_domain_points_skipped(self, raster_domain: GeoTensor) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        track = np.array([[-5.0, 8.0], [8.0, 8.0], [200.0, 8.0]])
+        s = SpatialAlongTrack(track=track)
+        rect = SpatialRectangular(size=(4, 4))
+        anchors = list(s.anchors(raster_domain, rect))
+        assert len(anchors) == 1
+
+    def test_point_domain_yields_xy(self) -> None:
+        from scipy.spatial import cKDTree
+
+        from geopatcher import PointDomain, SpatialAlongTrack, SpatialKNNGraph
+
+        coords = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
+        domain = PointDomain(coords=coords, kdtree=cKDTree(coords))
+        track = np.array([[0.1, 0.1], [1.9, 1.9]])
+        s = SpatialAlongTrack(track=track)
+        anchors = list(s.anchors(domain, SpatialKNNGraph(k=1)))
+        assert anchors == [(0.1, 0.1), (1.9, 1.9)]
+
+    def test_duplicate_vertices_collapsed(self) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        track = np.array([[0.0, 0.0], [0.0, 0.0], [4.0, 0.0]])
+        s = SpatialAlongTrack(track=track, spacing=2.0)
+        pts = s._resampled()
+        assert len(pts) == 3
+
+    def test_spacing_requires_two_distinct_vertices(self) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        s = SpatialAlongTrack(track=np.array([[1.0, 1.0], [1.0, 1.0]]), spacing=1.0)
+        with pytest.raises(ValueError, match="two distinct"):
+            s._resampled()
+
+    def test_linestring_track(self) -> None:
+        shapely = pytest.importorskip("shapely")
+
+        from geopatcher import SpatialAlongTrack
+
+        line = shapely.LineString([(0, 0), (3, 4)])
+        s = SpatialAlongTrack(track=line, spacing=5.0)
+        pts = s._resampled()
+        np.testing.assert_allclose(pts, [[0.0, 0.0], [3.0, 4.0]])
+
+    def test_get_config(self) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        s = SpatialAlongTrack(track=np.zeros((7, 2)), spacing=2.5)
+        assert s.get_config() == {"n_points": 7, "spacing": 2.5}
