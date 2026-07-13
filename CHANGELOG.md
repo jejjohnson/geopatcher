@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.7](https://github.com/jejjohnson/geopatcher/compare/v0.0.6...v0.0.7) (2026-07-13)
+
+
+### Features
+
+* boundary reflect/pad_value ([#19](https://github.com/jejjohnson/geopatcher/issues/19)), CRS-aware patching ([#20](https://github.com/jejjohnson/geopatcher/issues/20)), PatchCache ([#24](https://github.com/jejjohnson/geopatcher/issues/24)) ([#71](https://github.com/jejjohnson/geopatcher/issues/71)) ([bc7de78](https://github.com/jejjohnson/geopatcher/commit/bc7de783b1ebc6dadb5c013aa295e0136f0b986a))
+
+
+### Bug Fixes
+
+* review follow-ups — centered-overflow anchors, bounded coord lookup ([#74](https://github.com/jejjohnson/geopatcher/issues/74)) ([0e67f35](https://github.com/jejjohnson/geopatcher/commit/0e67f35850309bce162d8e49ce798664ffdfa82d))
+
 ## [0.0.6](https://github.com/jejjohnson/geopatcher/compare/v0.0.5...v0.0.6) (2026-07-11)
 
 
