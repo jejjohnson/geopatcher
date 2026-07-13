@@ -255,3 +255,19 @@ class TestCoordAwareTemporal:
         assert len(with_coord) == len(without)
         for a, b in zip(with_coord, without, strict=True):
             np.testing.assert_array_equal(a.data, b.data)
+
+    def test_coupled_short_coord_raises_value_error(
+        self, time_field: RasterField, tp_coord: TemporalPatcher, coord: np.ndarray
+    ) -> None:
+        # A paired time anchor beyond the coord's length must surface as
+        # the documented ValueError, not an IndexError from the hook
+        # payload lookup.
+        sp = SpatialPatcher(
+            geometry=SpatialRectangular(size=(8, 8)),
+            sampler=SpatialExplicit(anchors_=[((0, 0), 5)]),
+            window=SpatialBoxcar(),
+            aggregation=SpatialOverlapAdd(),
+        )
+        stp = SpatioTemporalPatcher(spatial=sp, temporal=tp_coord, coupling="coupled")
+        with pytest.raises(ValueError, match="coord length"):
+            list(stp.split(time_field, coord=coord[:4]))

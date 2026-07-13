@@ -517,24 +517,27 @@ def _raster_center_anchors(
     Shared by `SpatialAlongTrack` and `SpatialExplicitCoords`: each point
     goes through the inverse affine to a pixel, and the yielded anchor is
     the UL corner that centres the geometry's patch on it. Points outside
-    the raster are skipped; anchors are clamped to keep the patch in-domain
-    under the default ``"drop"`` boundary.
+    the raster are skipped. Only the default ``"drop"`` boundary clamps
+    anchors to keep the patch fully in-domain; the other modes preserve
+    the raw (possibly negative / overflowing) anchor so ``"pad"`` reads
+    boundless context and ``"raise"`` can detect the overflow instead of
+    silently shifting the patch inward.
     """
     h, w = int(domain.shape[-2]), int(domain.shape[-1])
     size = getattr(geometry, "size", (1, 1))
     ph, pw = int(size[-2]), int(size[-1])
     boundary = getattr(geometry, "boundary", "drop")
-    if boundary == "drop":
-        rmax, cmax = max(h - ph, 0), max(w - pw, 0)
-    else:
-        rmax, cmax = h - 1, w - 1
     inv = ~domain.transform
     for x, y in points:
         col_f, row_f = inv * (float(x), float(y))
         r, c = int(np.floor(row_f)), int(np.floor(col_f))
         if not (0 <= r < h and 0 <= c < w):
             continue
-        yield (min(rmax, max(0, r - ph // 2)), min(cmax, max(0, c - pw // 2)))
+        ar, ac = r - ph // 2, c - pw // 2
+        if boundary == "drop":
+            ar = min(max(h - ph, 0), max(0, ar))
+            ac = min(max(w - pw, 0), max(0, ac))
+        yield (ar, ac)
 
 
 def _validate_polar_guard(policy: str) -> None:
