@@ -221,7 +221,16 @@ class SpatioTemporalPatcher:
         for pair in anchors:
             space_anchor, time_anchor = pair
             anchor = (space_anchor, int(time_anchor))
-            coord_value = coord[int(time_anchor)] if coord is not None else None
+            # Bounded lookup: coord length isn't validated until the patch
+            # is read (time_len is unknown before the read in coupled
+            # mode), so an out-of-range anchor must not raise IndexError
+            # here — _require_coord below reports the documented
+            # ValueError through the on_error dispatch instead.
+            coord_value = (
+                coord[int(time_anchor)]
+                if coord is not None and 0 <= int(time_anchor) < len(coord)
+                else None
+            )
             _dispatch(hooks, "on_patch_start", anchor, coord_value)
             start = perf_counter()
             try:
@@ -326,7 +335,16 @@ class SpatioTemporalPatcher:
         for pair in anchors:
             space_anchor, time_anchor = pair
             anchor = (space_anchor, int(time_anchor))
-            coord_value = coord[int(time_anchor)] if coord is not None else None
+            # Bounded lookup: coord length isn't validated until the patch
+            # is read (time_len is unknown before the read in coupled
+            # mode), so an out-of-range anchor must not raise IndexError
+            # here — _require_coord below reports the documented
+            # ValueError through the on_error dispatch instead.
+            coord_value = (
+                coord[int(time_anchor)]
+                if coord is not None and 0 <= int(time_anchor) < len(coord)
+                else None
+            )
             _dispatch(hooks, "on_patch_start", anchor, coord_value)
             start = perf_counter()
             try:
