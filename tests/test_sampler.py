@@ -236,3 +236,18 @@ class TestSpatialAlongTrack:
 
         s = SpatialAlongTrack(track=np.zeros((7, 2)), spacing=2.5)
         assert s.get_config() == {"n_points": 7, "spacing": 2.5}
+
+    def test_non_drop_boundary_preserves_centered_overflow(
+        self, raster_domain: GeoTensor
+    ) -> None:
+        from geopatcher import SpatialAlongTrack
+
+        # Track point in pixel (0, 0): centring a 4x4 patch needs anchor
+        # (-2, -2). "pad" must keep the overflow (boundless read fills
+        # the context); only "drop" clamps the anchor in-domain.
+        track = np.array([[0.5, 0.5]])
+        s = SpatialAlongTrack(track=track)
+        padded = SpatialRectangular(size=(4, 4), boundary="pad")
+        assert list(s.anchors(raster_domain, padded)) == [(-2, -2)]
+        dropped = SpatialRectangular(size=(4, 4), boundary="drop")
+        assert list(s.anchors(raster_domain, dropped)) == [(0, 0)]

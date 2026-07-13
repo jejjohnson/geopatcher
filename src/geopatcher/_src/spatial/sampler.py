@@ -391,10 +391,6 @@ class SpatialAlongTrack(SpatialSampler):
             size = getattr(geometry, "size", (1, 1))
             ph, pw = int(size[-2]), int(size[-1])
             boundary = getattr(geometry, "boundary", "drop")
-            if boundary == "drop":
-                rmax, cmax = max(h - ph, 0), max(w - pw, 0)
-            else:
-                rmax, cmax = h - 1, w - 1
             inv = ~domain.transform
             for x, y in points:
                 col_f, row_f = inv * (float(x), float(y))
@@ -402,10 +398,16 @@ class SpatialAlongTrack(SpatialSampler):
                 if not (0 <= r < h and 0 <= c < w):
                     continue
                 # Upper-left corner that centres the patch on the pixel.
-                yield (
-                    min(rmax, max(0, r - ph // 2)),
-                    min(cmax, max(0, c - pw // 2)),
-                )
+                # Only "drop" clamps the anchor so the patch stays fully
+                # in-domain; the other boundary modes need the raw
+                # (possibly negative / overflowing) anchor preserved so
+                # "pad" reads boundless context and "raise" can detect
+                # the overflow instead of silently shifting the patch.
+                ar, ac = r - ph // 2, c - pw // 2
+                if boundary == "drop":
+                    ar = min(max(h - ph, 0), max(0, ar))
+                    ac = min(max(w - pw, 0), max(0, ac))
+                yield (ar, ac)
             return
         if isinstance(domain, PointDomain):
             for x, y in points:
